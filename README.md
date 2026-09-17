@@ -42,14 +42,16 @@ pipx install "tabify-cli[audio]"
 | --- | --- | --- |
 | `tabify-cli` | MIDI → tab, all the tab features | 3.10+ |
 | `tabify-cli[audio]` | + audio transcription of **single-note** lines (librosa pYIN) | 3.10+ |
-| `tabify-cli[ml]` | + **chords/polyphonic** transcription with Spotify's [basic-pitch](https://github.com/spotify/basic-pitch) | 3.10–3.11 |
+| `tabify-cli[ml]` | + **chords, power chords and other intervals** via Spotify's [basic-pitch](https://github.com/spotify/basic-pitch) | 3.10–3.11 |
 | `tabify-cli[separate]` | + **full-mix support**: split a band recording into stems (guitar/bass/drums/vocals/piano) before tabbing, via [Demucs](https://github.com/facebookresearch/demucs) | 3.10+ |
 | `tabify-cli[render]` | + **real audio rendering** of a transcription (acoustic/distorted guitar, bass, ...) via FluidSynth | 3.10+ |
 
 ```bash
-# polyphonic engine (basic-pitch currently needs Python 3.11 or older)
+# chord/power-chord engine (basic-pitch currently needs Python 3.11 or older)
 pipx install "tabify-cli[ml]" --python 3.11
 ```
+
+`[ml]` pulls in TensorFlow, which is a genuinely large download (~1.2 GB) - basic-pitch's model needs it on Windows/Linux for Python 3.11+. Worth knowing before you install it, not after.
 
 Try it without any audio:
 
@@ -77,6 +79,7 @@ tabify full_band_song.mp3 --separate -o song.txt   # writes song.guitar.txt, son
 
 # hear it back with a real guitar tone (needs FluidSynth - see below)
 tabify riff.wav --audio-out riff_render.wav --instrument distortion
+tabify riff.wav --audio-out heavy.wav --instrument distortion --drive 1.0 --tone 0.7   # crunchier, darker
 
 # play along: the tab scrolls and highlights in sync with playback, Songsterr-style
 tabify riff.wav --play                          # plays the original recording
@@ -102,6 +105,8 @@ tabify song.mid --play                          # MIDI has no "original recordin
 | `--instrument NAME` | Tone for `--midi-out`/`--audio-out`: `nylon`, `steel`, `jazz`, `clean`, `muted`, `overdrive`, `distortion`, `harmonics`, or a bass patch |
 | `--audio-out FILE` | Render real audio of the transcription with `--instrument`'s tone (needs `[render]`) |
 | `--soundfont FILE` | Use your own `.sf2` for `--audio-out` (default: a small one, downloaded once) |
+| `--drive 0-1` | Distortion amount for `--audio-out`/`--play` (real waveshaping DSP, not just a soundfont patch - default: a sensible amount for `distortion`/`overdrive`/`muted`, 0 for cleaner tones) |
+| `--tone 0-1` | Distortion tone: 0 = brighter, 1 = darker/more muffled (default: 0.5) |
 | `--play` | Play along: the tab scrolls and highlights in sync with audio, Songsterr-style (needs `[play]`) |
 | `--source` | What `--play` plays: `original` (the recording) or `synth` (a rendered tone) - default: original if available |
 | `--seek-seconds N` | Seconds to jump with the arrow keys in `--play` (default: 5) |
@@ -126,6 +131,8 @@ pip install "tabify-cli[render]"
 ```
 
 The first render auto-downloads a small (~6 MB) General MIDI soundfont. Pass `--soundfont your.sf2` to use a bigger one for a better tone.
+
+`distortion`/`overdrive`/`muted` also run through real waveshaping distortion DSP on top of whatever the soundfont provides - a small soundfont's own "Distortion Guitar" sample tends to sound thin on its own, so tabify adds the actual clipping and harmonics a pedal or overdriven amp would, then rolls off the harsh top end the way a speaker cabinet does. Tune it with `--drive`/`--tone`, or turn it off entirely on any instrument with `--drive 0`.
 
 ### Play-along mode
 
@@ -158,7 +165,7 @@ MIDI  ────────────────────────�
 
 Automatic music transcription is still an open research problem, so here's what to expect:
 
-- **Works best on:** a clean recording of one guitar, such as a DI or close-mic recording, a riff, or a solo.
+- **Works best on:** a clean recording of one guitar, such as a DI or close-mic recording, a riff, or a solo. With `--engine basic-pitch` (needs `[ml]`), chords, power chords and dyads (thirds, fourths, fifths, octaves) transcribe correctly - verified against a set of synthesized power chords and intervals, all detected with the right notes.
 - **Harder:** full band mixes, heavy distortion, and dense strumming. The notes will be rough.
 - It doesn't detect bends, slides, hammer-ons, or palm muting yet.
 - Beat tracking finds the beats but can't be sure where bar 1 starts. Use `--bpm` if the tempo is off.

@@ -71,6 +71,49 @@ def resolve_soundfont(path: str | None) -> Path:
     return cached
 
 
+# Per-instrument default drive (0 = clean passthrough), used when --drive isn't given explicitly.
+# Distortion is real signal processing on top of the soundfont's own patch, not just picking a
+# different GM program number - a small soundfont's "Distortion Guitar" sample alone tends to
+# sound thin, so this adds the actual clipping/harmonics a distortion pedal or overdriven amp adds.
+DEFAULT_DRIVE = {"distortion": 0.75, "overdrive": 0.4, "muted": 0.15}
+
+
+def _lowpass(audio, cutoff_hz: float, sample_rate: int):
+    """A one-pole-shaped low-pass, applied in the frequency domain (fast, no scipy needed).
+
+    Stands in for a guitar speaker cabinet, which rolls off the harsh high harmonics that
+    clipping adds - without it, distortion sounds like digital fuzz rather than an amp.
+    """
+    import numpy as np
+
+    n = audio.shape[0]
+    freqs = np.fft.rfftfreq(n, d=1.0 / sample_rate)
+    response = 1.0 / np.sqrt(1.0 + (freqs / cutoff_hz) ** 2)  # |H(f)| of a single-pole low-pass
+    spectrum = np.fft.rfft(audio, axis=0)
+    return np.fft.irfft(spectrum * response[:, None], n=n, axis=0).astype(np.float32)
+
+
+def _distort(audio, sample_rate: int, drive: float, tone: float = 0.5):
+    """Soft-clip waveshaping distortion, the same basic technique real distortion pedals use,
+    followed by a cabinet-style low-pass so the added harmonics sound like an amp, not fuzz.
+
+    `drive` in [0, 1]: how hard the signal clips (0 leaves audio untouched). `tone` in [0, 1]:
+    how dark the post-clip low-pass is (0 = brighter/~7kHz, 1 = darker/~2.5kHz).
+    """
+    import numpy as np
+
+    if drive <= 0:
+        return audio
+    gain = 1.0 + drive * 14.0
+    shaped = np.tanh(audio * gain)
+    shaped = _lowpass(shaped, 7000.0 - tone * 4500.0, sample_rate)
+    # Renormalize toward the original peak so different drive amounts stay comparably loud,
+    # with a little headroom so the waveshaper's own peaks don't clip on export.
+    peak = float(np.abs(audio).max()) or 1e-9
+    shaped_peak = float(np.abs(shaped).max()) or 1e-9
+    return (shaped * (peak / shaped_peak) * 0.92).astype(np.float32)
+
+
 def schedule(events: list[TabEvent], tuning: Tuning, capo: int, bpm: float) -> list[tuple[float, bool, int]]:
     """Turn tab events into (seconds, is_note_on, pitch) triples, ready to feed to a synth.
 
@@ -99,6 +142,8 @@ def synthesize(
     soundfont: str | None = None,
     sample_rate: int = 44100,
     tail_seconds: float = 1.5,
+    drive: float | None = None,
+    tone: float = 0.5,
 ):
     """Render tab events to an in-memory (frames, 2) float32 array at `sample_rate`.
 
@@ -135,7 +180,9 @@ def synthesize(
     finally:
         synth.delete()
 
-    return np.concatenate(chunks).astype(np.float32).reshape(-1, 2) / 32768.0
+    audio = np.concatenate(chunks).astype(np.float32).reshape(-1, 2) / 32768.0
+    effective_drive = DEFAULT_DRIVE.get(instrument, 0.0) if drive is None else drive
+    return _distort(audio, sample_rate, effective_drive, tone)
 
 
 def render_audio(
@@ -149,11 +196,13 @@ def render_audio(
     soundfont: str | None = None,
     sample_rate: int = 44100,
     tail_seconds: float = 1.5,
+    drive: float | None = None,
+    tone: float = 0.5,
 ) -> None:
     import soundfile as sf
 
     audio = synthesize(
-        events, tuning, instrument=instrument, capo=capo, bpm=bpm,
-        soundfont=soundfont, sample_rate=sample_rate, tail_seconds=tail_seconds,
+        events, tuning, instrument=instrument, capo=capo, bpm=bpm, soundfont=soundfont,
+        sample_rate=sample_rate, tail_seconds=tail_seconds, drive=drive, tone=tone,
     )
     sf.write(str(out_path), audio, sample_rate)

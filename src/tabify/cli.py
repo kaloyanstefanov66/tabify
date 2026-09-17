@@ -80,6 +80,12 @@ def build_parser() -> argparse.ArgumentParser:
         help="render actual audio (wav/flac/ogg) of the transcription with --instrument's tone, via FluidSynth",
     )
     g.add_argument("--soundfont", metavar="FILE", help="a .sf2 file for --audio-out (default: a small one, auto-downloaded once)")
+    g.add_argument(
+        "--drive", type=float, metavar="0-1",
+        help="distortion amount for --audio-out/--play (0=clean, 1=heavy; default: a sensible amount for "
+        "--instrument distortion/overdrive/muted, 0 for cleaner tones)",
+    )
+    g.add_argument("--tone", type=float, default=0.5, metavar="0-1", help="distortion tone: 0=brighter, 1=darker (default: 0.5)")
 
     g = p.add_argument_group("play-along")
     g.add_argument(
@@ -204,6 +210,7 @@ def _process_one(
         render_audio(
             fretted.events, tuning, out,
             instrument=instrument, capo=args.capo, bpm=bpm or 120.0, soundfont=args.soundfont,
+            drive=args.drive, tone=args.tone,
         )
         _info(f"Wrote audio to {out}")
 
@@ -229,7 +236,10 @@ def _play_one(
 
         instrument = args.instrument or default_instrument(tuning)
         _info(f"Synthesizing audio ({instrument}) ...")
-        audio = synthesize(fretted.events, tuning, instrument=instrument, capo=args.capo, bpm=bpm, soundfont=args.soundfont)
+        audio = synthesize(
+            fretted.events, tuning, instrument=instrument, capo=args.capo, bpm=bpm,
+            soundfont=args.soundfont, drive=args.drive, tone=args.tone,
+        )
         sample_rate = 44100
 
     width = args.width or shutil.get_terminal_size((100, 24)).columns

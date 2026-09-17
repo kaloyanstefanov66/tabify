@@ -1,9 +1,10 @@
+import numpy as np
 import pytest
 
 from tabify import TabifyError
 from tabify.fretting import assign_frets
 from tabify.notes import Note, name_to_midi
-from tabify.synth import RENDER_HELP, render_audio, resolve_soundfont, schedule
+from tabify.synth import DEFAULT_DRIVE, RENDER_HELP, _distort, render_audio, resolve_soundfont, schedule
 from tabify.tuning import parse_tuning
 
 STANDARD = parse_tuning("standard")
@@ -60,3 +61,69 @@ def test_resolve_soundfont_uses_explicit_path(tmp_path):
     sf2 = tmp_path / "my.sf2"
     sf2.write_bytes(b"fake soundfont data")
     assert resolve_soundfont(str(sf2)) == sf2
+
+
+def _pure_tone(freq_hz: float, seconds: float, sample_rate: int = 44100) -> np.ndarray:
+    t = np.arange(int(seconds * sample_rate)) / sample_rate
+    tone = (0.5 * np.sin(2 * np.pi * freq_hz * t)).astype(np.float32)
+    return np.stack([tone, tone], axis=1)
+
+
+def _spectrum(audio: np.ndarray, sample_rate: int = 44100):
+    mono = audio.mean(axis=1)
+    mags = np.abs(np.fft.rfft(mono))
+    freqs = np.fft.rfftfreq(len(mono), d=1.0 / sample_rate)
+    return freqs, mags
+
+
+def test_zero_drive_leaves_audio_untouched():
+    audio = _pure_tone(220.0, 0.5)
+    assert np.array_equal(_distort(audio, 44100, drive=0.0), audio)
+
+
+def test_distortion_adds_odd_harmonics_to_a_pure_tone():
+    # A clean sine has essentially all its energy at the fundamental. tanh is an odd (symmetric)
+    # function, so soft-clipping a sine generates *odd* harmonics (3rd, 5th, ...) at real,
+    # substantial energy - the measurable signature of "this distorts", not just gain - while
+    # even harmonics (2nd, 4th) stay near the noise floor, same as an unclipped signal.
+    fundamental = 220.0
+    clean = _pure_tone(fundamental, 0.5)
+    distorted = _distort(clean, 44100, drive=0.8, tone=0.3)
+
+    freqs, clean_mags = _spectrum(clean)
+    _, distorted_mags = _spectrum(distorted)
+
+    def energy_near(freqs, mags, target_hz, width=15.0):
+        return float(mags[(freqs > target_hz - width) & (freqs < target_hz + width)].sum())
+
+    fundamental_energy = energy_near(freqs, clean_mags, fundamental)
+    for harmonic in (3, 5):  # odd harmonics: real, substantial energy after distortion
+        assert energy_near(freqs, distorted_mags, fundamental * harmonic) > fundamental_energy * 0.05
+    for harmonic in (2, 4):  # even harmonics: stay near the noise floor, same as the clean signal
+        assert energy_near(freqs, distorted_mags, fundamental * harmonic) < fundamental_energy * 1e-4
+
+
+def test_more_drive_reduces_crest_factor():
+    # Distortion compresses/squashes a waveform - its peak-to-RMS ratio (crest factor) should
+    # drop as drive increases, the same way a squarer, more-clipped wave reads on a meter.
+    def crest_factor(audio):
+        mono = audio.mean(axis=1)
+        return np.abs(mono).max() / np.sqrt((mono**2).mean())
+
+    clean = _pure_tone(220.0, 0.5)
+    light = _distort(clean, 44100, drive=0.2, tone=0.5)
+    heavy = _distort(clean, 44100, drive=0.9, tone=0.5)
+    assert crest_factor(heavy) < crest_factor(light) < crest_factor(clean)
+
+
+def test_distortion_does_not_clip_on_export():
+    loud = _pure_tone(220.0, 0.5) * 2.0  # deliberately over unity, like a hot chord
+    distorted = _distort(loud, 44100, drive=1.0, tone=0.5)
+    assert np.abs(distorted).max() <= np.abs(loud).max()
+
+
+def test_default_drive_table_only_covers_real_instruments():
+    from tabify.instruments import ALL_PROGRAMS
+
+    assert set(DEFAULT_DRIVE).issubset(ALL_PROGRAMS)
+    assert all(0 <= d <= 1 for d in DEFAULT_DRIVE.values())
