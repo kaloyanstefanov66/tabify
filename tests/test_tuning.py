@@ -38,3 +38,37 @@ def test_invalid_tunings(spec):
 def test_all_presets_parse():
     for name in TUNINGS:
         assert parse_tuning(name).strings
+
+
+def test_every_preset_is_ordered_low_to_high_and_plausible():
+    for name in TUNINGS:
+        t = parse_tuning(name)
+        assert list(t.strings) == sorted(t.strings), f"{name} is not ordered low to high"
+        assert 4 <= len(t.strings) <= 8, f"{name} has an odd number of strings"
+        assert 20 <= t.strings[0] <= 64, f"{name}'s lowest string is out of range"
+
+
+def test_every_alias_points_at_a_real_preset():
+    from tabify.tuning import ALIASES
+
+    for alias, target in ALIASES.items():
+        assert target in TUNINGS, f"{alias} points at missing preset {target}"
+        assert parse_tuning(alias).strings == parse_tuning(target).strings
+
+
+def test_sharp_drop_tunings_exist_and_are_a_semitone_apart():
+    steps = ["drop-d", "drop-c#", "drop-c", "drop-b", "drop-a#", "drop-a", "drop-g#", "drop-g", "drop-f#"]
+    lowest = [parse_tuning(name).strings[0] for name in steps]
+    assert lowest == list(range(lowest[0], lowest[0] - len(steps), -1))
+
+
+def test_flat_spellings_work_the_same_as_sharps():
+    assert parse_tuning("drop-db").strings == parse_tuning("drop-c#").strings
+    assert parse_tuning("Drop Bb").strings == parse_tuning("drop-a#").strings
+    assert parse_tuning("eb-standard").strings == parse_tuning("half-step-down").strings
+
+
+def test_drop_tunings_have_a_fifth_between_the_two_lowest_strings():
+    for name in [n for n in TUNINGS if n.startswith("drop-")]:
+        strings = parse_tuning(name).strings
+        assert strings[1] - strings[0] == 7, f"{name} should be a dropped fifth"

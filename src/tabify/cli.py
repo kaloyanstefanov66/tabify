@@ -266,8 +266,18 @@ def _play_one(
 
 def run(args: argparse.Namespace) -> int:
     if args.list_tunings:
+        from tabify.tuning import ALIASES
+
+        also_known_as: dict[str, list[str]] = {}
+        for alias, target in ALIASES.items():
+            also_known_as.setdefault(target, []).append(alias)
+        name_w = max(len(n) for n in TUNINGS)
+        notes_w = max(len(v) for v in TUNINGS.values())
         for name, notes in TUNINGS.items():
-            print(f"{name:<16} {notes}")
+            aliases = also_known_as.get(name)
+            extra = f"   (also: {', '.join(aliases)})" if aliases else ""
+            print(f"{name:<{name_w}}  {notes:<{notes_w}}{extra}".rstrip())
+        print("\nAny other tuning: pass the open strings low to high, e.g. --tuning 'D2 A2 D3 G3 B3 E4'")
         return 0
 
     tuning = parse_tuning(args.tuning)

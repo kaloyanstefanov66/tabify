@@ -89,7 +89,7 @@ tabify song.mid --play                          # MIDI has no "original recordin
 
 | Option | What it does |
 | --- | --- |
-| `-t, --tuning` | Preset (`standard`, `drop-d`, `dadgad`, `open-g`, `bass`, `7-string`, …) or notes from low to high |
+| `-t, --tuning` | Preset or notes from low to high. 30 presets: every drop tuning from `drop-d` down to `drop-f#` (`drop-c#`, `drop-a#`, `drop-g#`, …), whole-guitar downtunings (`half-step-down` … `a-standard`), `open-g`/`open-d`/`open-e`/`open-c`, `dadgad`, 7- and 8-string, and bass. Flat spellings work too (`drop-db` = `drop-c#`). See `tabify --list-tunings` |
 | `--capo N` | Capo fret |
 | `--max-span N` | Biggest fret stretch allowed within a chord (default 4) |
 | `--max-fret N` | Highest fret on your guitar (default 22) |
