@@ -81,6 +81,18 @@ def build_parser() -> argparse.ArgumentParser:
     )
     g.add_argument("--soundfont", metavar="FILE", help="a .sf2 file for --audio-out (default: a small one, auto-downloaded once)")
 
+    g = p.add_argument_group("play-along")
+    g.add_argument(
+        "--play", action="store_true",
+        help="interactive play-along: the tab scrolls and highlights in sync with audio playback (needs [play])",
+    )
+    g.add_argument(
+        "--source", choices=("original", "synth"), metavar="NAME",
+        help="what --play plays: 'original' (the recording, most accurate) or 'synth' (a rendered guitar tone, "
+        "perfectly in sync with the tab but not the real sound) - default: original if available, else synth",
+    )
+    g.add_argument("--seek-seconds", type=float, default=5.0, help="seconds to jump with arrow keys in --play (default: 5)")
+
     g = p.add_argument_group("display")
     g.add_argument("--title", help="title shown above the tab")
     g.add_argument("--width", type=int, help="max line width (default: terminal width)")
@@ -134,17 +146,21 @@ def _transcribe_path(path: Path, tuning, args: argparse.Namespace) -> tuple[list
     return start_on_first_beat(result.notes), result.bpm, result.engine
 
 
+def _quantize_and_fret(notes: list[Note], time_sig: TimeSignature, tuning, args: argparse.Namespace):
+    notes = align_to_bars(quantize(notes, args.grid), time_sig)
+    opts = FretOptions(capo=args.capo, max_fret=args.max_fret, max_span=args.max_span)
+    fretted = assign_frets(notes, tuning, opts)
+    if fretted.dropped:
+        _info(f"warning: skipped {len(fretted.dropped)} note(s) that don't fit this tuning/capo")
+    return notes, fretted
+
+
 def _process_one(
     notes: list[Note], bpm: float, time_sig: TimeSignature, title: str, tuning,
     args: argparse.Namespace, label: str | None,
 ) -> None:
     """Quantize, fret, render and export one instrument's notes."""
-    notes = align_to_bars(quantize(notes, args.grid), time_sig)
-
-    opts = FretOptions(capo=args.capo, max_fret=args.max_fret, max_span=args.max_span)
-    fretted = assign_frets(notes, tuning, opts)
-    if fretted.dropped:
-        _info(f"warning: skipped {len(fretted.dropped)} note(s) that don't fit this tuning/capo")
+    notes, fretted = _quantize_and_fret(notes, time_sig, tuning, args)
 
     width = args.width or shutil.get_terminal_size((100, 24)).columns
     text = render_tab(
@@ -192,6 +208,38 @@ def _process_one(
         _info(f"Wrote audio to {out}")
 
 
+def _play_one(
+    notes: list[Note], bpm: float, time_sig: TimeSignature, title: str, tuning,
+    args: argparse.Namespace, audio_path: Path | None,
+) -> None:
+    from tabify.player import load_audio_file, play_along
+
+    notes, fretted = _quantize_and_fret(notes, time_sig, tuning, args)
+    bpm = bpm or 120.0
+
+    source = args.source or ("original" if audio_path else "synth")
+    if source == "original" and not audio_path:
+        raise TabifyError("--source original needs an audio file (this input has no original recording to play)")
+
+    if source == "original":
+        _info(f"Loading {audio_path.name} for playback ...")
+        audio, sample_rate = load_audio_file(audio_path)
+    else:
+        from tabify.synth import synthesize
+
+        instrument = args.instrument or default_instrument(tuning)
+        _info(f"Synthesizing audio ({instrument}) ...")
+        audio = synthesize(fretted.events, tuning, instrument=instrument, capo=args.capo, bpm=bpm, soundfont=args.soundfont)
+        sample_rate = 44100
+
+    width = args.width or shutil.get_terminal_size((100, 24)).columns
+    play_along(
+        fretted.events, tuning, audio, sample_rate,
+        bpm=bpm, time_sig=time_sig, subdivision=args.grid, capo=args.capo,
+        title=title, width=max(width, 20), color=_use_color(args), seek_seconds=args.seek_seconds,
+    )
+
+
 def run(args: argparse.Namespace) -> int:
     if args.list_tunings:
         for name, notes in TUNINGS.items():
@@ -211,7 +259,11 @@ def run(args: argparse.Namespace) -> int:
         from tabify.demo import demo_notes
 
         time_sig = time_sig or TimeSignature()
-        _process_one(demo_notes(), args.bpm or 90, time_sig, title or "tabify demo", tuning, args, None)
+        notes, bpm, title = demo_notes(), args.bpm or 90, title or "tabify demo"
+        if args.play:
+            _play_one(notes, bpm, time_sig, title, tuning, args, None)
+        else:
+            _process_one(notes, bpm, time_sig, title, tuning, args, None)
         return 0
 
     if not args.input:
@@ -222,6 +274,8 @@ def run(args: argparse.Namespace) -> int:
     title = title or path.stem
 
     if args.separate:
+        if args.play:
+            raise TabifyError("--play can't be combined with --separate yet - tab a stem to a file first, then play it")
         if path.suffix.lower() in MIDI_EXTENSIONS:
             raise TabifyError("--separate needs an audio file, not MIDI (a MIDI file already has separate tracks - use --track)")
         import tempfile
@@ -243,7 +297,8 @@ def run(args: argparse.Namespace) -> int:
                 _process_one(notes, bpm, ts, f"{title} ({name})", stem_tuning, args, name)
         return 0
 
-    if path.suffix.lower() in MIDI_EXTENSIONS:
+    is_midi = path.suffix.lower() in MIDI_EXTENSIONS
+    if is_midi:
         from tabify.midi_io import read_midi
 
         content = read_midi(path, args.track)
@@ -256,7 +311,10 @@ def run(args: argparse.Namespace) -> int:
         _info(f"Engine: {engine}, {len(notes)} notes, ~{round(bpm)} BPM")
 
     time_sig = time_sig or TimeSignature()
-    _process_one(notes, bpm, time_sig, title, tuning, args, None)
+    if args.play:
+        _play_one(notes, bpm, time_sig, title, tuning, args, None if is_midi else path)
+    else:
+        _process_one(notes, bpm, time_sig, title, tuning, args, None)
     return 0
 
 

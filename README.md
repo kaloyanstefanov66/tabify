@@ -77,6 +77,11 @@ tabify full_band_song.mp3 --separate -o song.txt   # writes song.guitar.txt, son
 
 # hear it back with a real guitar tone (needs FluidSynth - see below)
 tabify riff.wav --audio-out riff_render.wav --instrument distortion
+
+# play along: the tab scrolls and highlights in sync with playback, Songsterr-style
+tabify riff.wav --play                          # plays the original recording
+tabify riff.wav --play --source synth           # plays a synthesized guitar render instead
+tabify song.mid --play                          # MIDI has no "original recording", so this uses synth
 ```
 
 | Option | What it does |
@@ -97,6 +102,9 @@ tabify riff.wav --audio-out riff_render.wav --instrument distortion
 | `--instrument NAME` | Tone for `--midi-out`/`--audio-out`: `nylon`, `steel`, `jazz`, `clean`, `muted`, `overdrive`, `distortion`, `harmonics`, or a bass patch |
 | `--audio-out FILE` | Render real audio of the transcription with `--instrument`'s tone (needs `[render]`) |
 | `--soundfont FILE` | Use your own `.sf2` for `--audio-out` (default: a small one, downloaded once) |
+| `--play` | Play along: the tab scrolls and highlights in sync with audio, Songsterr-style (needs `[play]`) |
+| `--source` | What `--play` plays: `original` (the recording) or `synth` (a rendered tone) - default: original if available |
+| `--seek-seconds N` | Seconds to jump with the arrow keys in `--play` (default: 5) |
 | `--width`, `--title`, `--no-color` | Display options |
 
 ### Full-mix support and its real limit
@@ -118,6 +126,18 @@ pip install "tabify-cli[render]"
 ```
 
 The first render auto-downloads a small (~6 MB) General MIDI soundfont. Pass `--soundfont your.sf2` to use a bigger one for a better tone.
+
+### Play-along mode
+
+```bash
+pip install "tabify-cli[play]"
+tabify riff.wav --play
+```
+
+Space to pause/resume, ←/→ to seek, `q` to quit. Two sources, picked with `--source`:
+
+- **`original`** (the default, when available): plays the real recording. Sync quality depends on tabify's tempo detection - solid for a riff or a short clip, but can drift on a longer piece with tempo changes or rubato, since tabify currently detects one tempo rather than a full tempo map.
+- **`synth`**: plays a FluidSynth render of the transcription (needs `[render]` too). Always perfectly in sync with the tab, since both are generated from the exact same quantized notes - but it's a synthesized tone, not the real recording.
 
 ### Getting a tab into Songsterr
 
@@ -151,9 +171,11 @@ Treat the output as a strong first draft, then fix it by ear.
 - [ ] Hammer-on, pull-off, slide, and bend detection
 - [ ] Rhythm notation under the tab
 - [ ] `--position` to force a region of the neck
-- [ ] `tabify play` — scrolling/highlighted tab synced to audio playback (original recording or a synthesized render of the transcription, selectable with a flag), karaoke-style
 
-Done: full-mix stem separation (`--separate`) and real audio rendering (`--audio-out`) - both verified end-to-end (not just unit-tested): separating a synthetic guitar+bass+drums mix produced a guitar tab that exactly matched the original, and `--audio-out` produced real, audible acoustic and distortion guitar renders.
+Done, and verified end-to-end (not just unit-tested) rather than assumed to work:
+- **Full-mix stem separation** (`--separate`) - separating a synthetic guitar+bass+drums mix produced a guitar tab that exactly matched the original.
+- **Real audio rendering** (`--audio-out`) - produced real, audible acoustic and distortion guitar renders.
+- **Play-along mode** (`--play`) - confirmed correct real-time sync and scrolling against both a synthesized render and an actual recording, for runs of 5-20+ seconds. Not personally verified: the feel of the interactive controls (space/arrows/`q`) in a live terminal, since that needs an actual person at the keyboard - the pause/seek/quit logic itself is unit-tested with simulated keypresses.
 
 Contributions welcome! See [CONTRIBUTING.md](CONTRIBUTING.md).
 

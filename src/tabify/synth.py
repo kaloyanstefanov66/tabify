@@ -89,10 +89,9 @@ def schedule(events: list[TabEvent], tuning: Tuning, capo: int, bpm: float) -> l
     return raw
 
 
-def render_audio(
+def synthesize(
     events: list[TabEvent],
     tuning: Tuning,
-    out_path: str | Path,
     *,
     instrument: str = "steel",
     capo: int = 0,
@@ -100,14 +99,18 @@ def render_audio(
     soundfont: str | None = None,
     sample_rate: int = 44100,
     tail_seconds: float = 1.5,
-) -> None:
+):
+    """Render tab events to an in-memory (frames, 2) float32 array at `sample_rate`.
+
+    Shared by `render_audio` (writes it to a file) and the play-along player
+    (streams it straight to the speakers), so both hear exactly the same thing.
+    """
     if instrument not in ALL_PROGRAMS:
         raise TabifyError(f"unknown instrument {instrument!r} (choose from: {', '.join(ALL_PROGRAMS)})")
     if importlib.util.find_spec("fluidsynth") is None:
         raise TabifyError(RENDER_HELP)
     import fluidsynth  # imported lazily: needs a native library that may not be installed
     import numpy as np
-    import soundfile as sf
 
     sf2 = resolve_soundfont(soundfont)
     synth = fluidsynth.Synth(samplerate=float(sample_rate))
@@ -132,5 +135,25 @@ def render_audio(
     finally:
         synth.delete()
 
-    audio = np.concatenate(chunks).astype(np.float32) / 32768.0
-    sf.write(str(out_path), audio.reshape(-1, 2), sample_rate)
+    return np.concatenate(chunks).astype(np.float32).reshape(-1, 2) / 32768.0
+
+
+def render_audio(
+    events: list[TabEvent],
+    tuning: Tuning,
+    out_path: str | Path,
+    *,
+    instrument: str = "steel",
+    capo: int = 0,
+    bpm: float = 120.0,
+    soundfont: str | None = None,
+    sample_rate: int = 44100,
+    tail_seconds: float = 1.5,
+) -> None:
+    import soundfile as sf
+
+    audio = synthesize(
+        events, tuning, instrument=instrument, capo=capo, bpm=bpm,
+        soundfont=soundfont, sample_rate=sample_rate, tail_seconds=tail_seconds,
+    )
+    sf.write(str(out_path), audio, sample_rate)
