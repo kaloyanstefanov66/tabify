@@ -42,6 +42,7 @@ class RefineReport:
     onsets: int = 0
     snapped: int = 0
     splits: int = 0
+    ghosts_dropped: int = 0
     roots_added: int = 0
     low_end_hz: float = 0.0
 
@@ -108,17 +109,44 @@ def cluster_starts(notes: list[TimedNote], window: float = 0.06) -> list[TimedNo
     return out
 
 
-def split_restrikes(notes: list[TimedNote], onsets, *, min_piece: float = 0.05):
+def attack_rises(y: np.ndarray, sr: int, *, before: float = 0.05, after: float = 0.04):
+    """Return a function: how many dB the audio jumps at time t, versus just before it.
+
+    Re-striking a string is loud; a note ringing on through a neighbour's attack is not.
+    Without this check, held chords get chopped into repeated strokes - measured at a 20
+    point F1 drop on sustained material.
+    """
+    import librosa
+
+    rms_db = 20 * np.log10(librosa.feature.rms(y=y, frame_length=512, hop_length=HOP)[0] + _EPS)
+    frame = sr / HOP
+
+    def rise(t: float) -> float:
+        peak_from, peak_to = int(t * frame), int((t + after) * frame) + 1
+        quiet_from, quiet_to = int((t - before) * frame), max(int(t * frame), 1)
+        if peak_from >= len(rms_db) or quiet_from < 0 or quiet_to <= quiet_from:
+            return 0.0
+        peak = rms_db[peak_from:peak_to].max(initial=-np.inf)
+        return float(peak - np.median(rms_db[quiet_from:quiet_to]))
+
+    return rise
+
+
+def split_restrikes(notes: list[TimedNote], onsets, *, min_piece: float = 0.05, rise=None, min_rise_db: float = 2.0):
     """Split notes that keep sounding through an attack where they were actually re-struck.
 
     A sounding note is split at an attack if nothing else starts there (the attack must
-    belong to something already ringing), or if a note it was struck together with
-    starts again there (its chord was re-struck, but the model merged this string).
+    belong to something already ringing), or if a note it was struck together with starts
+    again there (its chord was re-struck, but the model merged this string). When a `rise`
+    function is given, the audio must also actually get louder at that attack, so notes
+    left ringing under someone else's attack are not chopped up.
     Returns (notes, number of splits).
     """
     notes = sorted(notes, key=lambda n: (n.start, n.pitch))
     splits = 0
     for t in np.asarray(onsets, dtype=float):
+        if rise is not None and rise(float(t)) < min_rise_db:
+            continue
         starting = {n.pitch for n in notes if abs(n.start - t) < 1e-6}
         updated = []
         for n in notes:
@@ -132,6 +160,39 @@ def split_restrikes(notes: list[TimedNote], onsets, *, min_piece: float = 0.05):
             updated.append(n)
         notes = sorted(updated, key=lambda n: (n.start, n.pitch))
     return notes, splits
+
+
+# --- overtone ghosts --------------------------------------------------------------
+
+# Semitones above a note where its own overtones land: the 3rd harmonic (octave + fifth),
+# 4th (two octaves), 5th and 6th. The 2nd harmonic (+12) is left out on purpose - in drop
+# tunings the octave really is fretted on its own string, so dropping those loses real notes.
+GHOST_INTERVALS = (19, 24, 28, 31)
+
+
+def drop_overtone_ghosts(notes: list[TimedNote], *, max_relative_velocity: float = 1.0):
+    """Remove notes that are just a louder, lower note's overtone. Returns (notes, dropped).
+
+    Distortion multiplies overtones, and pitch models report the strong ones as notes of
+    their own: on a synthesized drop-C riff, every spurious note was +12, +19 or +24
+    semitones above a real one.
+    """
+    by_start: dict[float, list[TimedNote]] = {}
+    for n in notes:
+        by_start.setdefault(n.start, []).append(n)
+
+    ghosts = set()
+    for group in by_start.values():
+        for note in group:
+            for lower in group:
+                if (
+                    note.pitch - lower.pitch in GHOST_INTERVALS
+                    and note.velocity <= lower.velocity * max_relative_velocity
+                ):
+                    ghosts.add(id(note))
+                    break
+    kept = [n for n in notes if id(n) not in ghosts]
+    return kept, len(notes) - len(kept)
 
 
 # --- missing low roots ----------------------------------------------------------
@@ -207,37 +268,67 @@ def overtone_evidence(spectra: _Spectra, t0: float, t1: float, candidate: int, p
     return float(own_levels.mean() / (ref_levels.mean() + _EPS))
 
 
-def restore_missing_roots(
+# Intervals (semitones) above a root that a stroke's notes may legitimately sit at: the
+# fifth and octave of a power chord, plus the root's own 2nd-6th harmonics.
+_ROOT_INTERVALS = (0, 7, 12, 19, 24, 28, 31)
+# Of those, the ones that are only ever overtones, never a string someone fretted.
+_OVERTONE_ONLY = (19, 24, 28, 31)
+
+
+def collapse_to_roots(
     notes: list[TimedNote], y: np.ndarray, sr: int, *, lowest: int, floor_hz: float, evidence: float = 0.35,
 ):
-    """Add power-chord roots that sit below the recording's low-end floor. Returns (notes, added)."""
+    """Rebuild each stroke around the note that actually produced it. Returns (notes, added, dropped).
+
+    A distorted low note often reaches a pitch model only as its overtones: a lone drop-C
+    chug (C2) came back as C3 + G3, with the root missing entirely. So for each stroke,
+    find the lowest playable root whose harmonic series explains every note heard, add it
+    if it isn't there, and drop the partials that can only be overtones - a fifth or octave
+    above the root is kept, since those are real strings in a power chord.
+
+    A root is only added when its own overtones are actually in the audio, which works
+    even when its fundamental is missing (that test ignores the fundamental). Gating on
+    the recording's low-end floor instead was tried and was much worse: a lead line high
+    on the neck has no low end either, and every note grew a bass note underneath it.
+    """
     spectra = _Spectra(y, sr)
     groups: dict[float, list[TimedNote]] = {}
     for n in notes:
         groups.setdefault(n.start, []).append(n)
 
     added: list[TimedNote] = []
+    drop: set[int] = set()
     for start, group in groups.items():
         pitches = sorted({n.pitch for n in group})
-        low = pitches[0]
-        root = None
-        if low + 5 in pitches:
-            # A bare fourth as the two lowest notes is almost always the fifth and octave of a
-            # power chord whose root got lost - but only trust that if the root really is inaudible.
-            if low - 7 >= lowest and _hz(low - 7) < floor_hz:
-                root = low - 7
-        elif len(pitches) == 1:
-            end = min(n.end for n in group)
-            t0, t1 = start + 0.015, min(end, start + 0.25)
-            candidates = [c for c in (low - 7, low - 12) if c >= lowest and _hz(c) < floor_hz]
-            scored = [(overtone_evidence(spectra, t0, t1, c, pitches), c) for c in candidates]
-            scored = [s for s in scored if s[0] >= evidence]
-            if scored:
-                root = max(scored)[1]
-        if root is not None:
-            ref = max(group, key=lambda n: n.velocity)
-            added.append(TimedNote(start, min(n.end for n in group), root, ref.velocity))
-    return sorted(notes + added, key=lambda n: (n.start, n.pitch)), len(added)
+        end = min(n.end for n in group)
+        explaining = [
+            pitches[0] - k
+            for k in (7, 12, 19, 24)
+            if pitches[0] - k >= lowest and all(p - (pitches[0] - k) in _ROOT_INTERVALS for p in pitches)
+        ]
+        scored = []
+        for candidate in explaining:
+            # A fifth-and-octave pair with nothing under it is a power chord missing its root:
+            # structural enough to trust on its own, when the root is too low for this
+            # recording to have carried. A single note can never match that shape, which is
+            # what keeps lead lines from growing bass notes underneath them.
+            shape = {p - candidate for p in pitches}
+            if len(pitches) >= 2 and shape <= {7, 12} and _hz(candidate) < floor_hz:
+                scored.append((float("inf"), candidate))
+                continue
+            strength = overtone_evidence(spectra, start + 0.015, min(end, start + 0.25), candidate, pitches)
+            if strength >= evidence:
+                scored.append((strength, candidate))
+        root = pitches[0]  # nothing lower is evidenced: the lowest note heard is the root
+        if scored:
+            root = max(scored)[1]
+            added.append(TimedNote(start, end, root, max(n.velocity for n in group)))
+        for n in group:
+            if n.pitch - root in _OVERTONE_ONLY:
+                drop.add(id(n))
+
+    kept = [n for n in notes if id(n) not in drop]
+    return sorted(kept + added, key=lambda n: (n.start, n.pitch)), len(added), len(drop)
 
 
 # --- all together ----------------------------------------------------------------------
@@ -250,7 +341,9 @@ def refine(notes: list[TimedNote], y: np.ndarray, sr: int, *, lowest: int) -> tu
     onsets = detect_onsets(y, sr)
     report.onsets = len(onsets)
     notes, report.snapped = snap_to_onsets(notes, onsets)
-    notes, report.splits = split_restrikes(notes, onsets)
+    notes, report.splits = split_restrikes(notes, onsets, rise=attack_rises(y, sr))
+    notes, ghosts = drop_overtone_ghosts(notes)
     report.low_end_hz = low_end_floor(y, sr)
-    notes, report.roots_added = restore_missing_roots(notes, y, sr, lowest=lowest, floor_hz=report.low_end_hz)
+    notes, report.roots_added, collapsed = collapse_to_roots(notes, y, sr, lowest=lowest, floor_hz=report.low_end_hz)
+    report.ghosts_dropped = ghosts + collapsed
     return notes, report

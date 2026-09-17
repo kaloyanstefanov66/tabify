@@ -12,7 +12,7 @@ from tabify.refine import (  # noqa: E402
     detect_onsets,
     low_end_floor,
     overtone_evidence,
-    restore_missing_roots,
+    collapse_to_roots,
     snap_to_onsets,
     split_restrikes,
 )
@@ -117,30 +117,49 @@ def test_overtone_evidence_separates_missing_roots_from_real_single_notes(played
 
 def test_restores_the_root_of_a_fourth_dyad_below_the_recordings_floor():
     y = guitar([C2, G2, C3], highpass=90)
-    notes, added = restore_missing_roots([note(0, 0.4, G2), note(0, 0.4, C3)], y, SR, lowest=C2, floor_hz=89)
+    notes, added, _ = collapse_to_roots([note(0, 0.4, G2), note(0, 0.4, C3)], y, SR, lowest=C2, floor_hz=89)
     assert added == 1
     assert sorted(n.pitch for n in notes) == [C2, G2, C3]
 
 
 def test_does_not_invent_a_root_the_recording_could_have_carried():
     y = guitar([G2, C3])
-    _, added = restore_missing_roots([note(0, 0.4, G2), note(0, 0.4, C3)], y, SR, lowest=C2, floor_hz=50)
+    _, added, _ = collapse_to_roots([note(0, 0.4, G2), note(0, 0.4, C3)], y, SR, lowest=C2, floor_hz=50)
     assert added == 0
 
 
 def test_does_not_add_roots_to_a_fifth_or_below_the_tunings_lowest_string():
     y = guitar([GS2, DS3], highpass=90)
-    _, added = restore_missing_roots([note(0, 0.4, GS2), note(0, 0.4, DS3)], y, SR, lowest=C2, floor_hz=89)
+    _, added, _ = collapse_to_roots([note(0, 0.4, GS2), note(0, 0.4, DS3)], y, SR, lowest=C2, floor_hz=89)
     assert added == 0  # G#2 + D#3 is already root and fifth
     y = guitar([C2, G2, C3], highpass=90)
-    _, added = restore_missing_roots([note(0, 0.4, G2), note(0, 0.4, C3)], y, SR, lowest=40, floor_hz=89)
+    _, added, _ = collapse_to_roots([note(0, 0.4, G2), note(0, 0.4, C3)], y, SR, lowest=40, floor_hz=89)
     assert added == 0  # standard tuning's lowest string is E2, so a C2 root isn't playable
 
 
 def test_restores_a_single_notes_root_only_with_overtone_evidence():
     chug = guitar([C2, G2], highpass=90)
-    notes, added = restore_missing_roots([note(0, 0.4, G2)], chug, SR, lowest=C2, floor_hz=89)
+    notes, added, _ = collapse_to_roots([note(0, 0.4, G2)], chug, SR, lowest=C2, floor_hz=89)
     assert added == 1 and sorted(n.pitch for n in notes) == [C2, G2]
     lone_g = guitar([G2], highpass=90)
-    _, added = restore_missing_roots([note(0, 0.4, G2)], lone_g, SR, lowest=C2, floor_hz=89)
+    _, added, _ = collapse_to_roots([note(0, 0.4, G2)], lone_g, SR, lowest=C2, floor_hz=89)
+    assert added == 0
+
+
+def test_collapses_a_stroke_heard_only_as_overtones_back_to_its_root():
+    # A lone drop-C chug reaches the pitch model as C3 + G3 (its 2nd and 3rd harmonics)
+    # with the root itself missing: the root should come back and the pure overtone should go.
+    y = guitar([C2], highpass=90)
+    notes, added, dropped = collapse_to_roots(
+        [note(0, 0.4, C3), note(0, 0.4, 55)], y, SR, lowest=C2, floor_hz=89
+    )
+    assert added == 1 and dropped == 1
+    assert sorted(n.pitch for n in notes) == [C2, C3]  # G3 was only an overtone
+
+
+def test_a_lead_note_high_on_the_neck_grows_no_bass_note_underneath():
+    # A recording of a lead line has no low end either - that must not be read as a
+    # missing root, which is exactly the regression an earlier low-end-only rule caused.
+    lead = guitar([64])  # E4
+    _, added, _ = collapse_to_roots([note(0, 0.4, 64)], lead, SR, lowest=40, floor_hz=250)
     assert added == 0

@@ -175,6 +175,37 @@ Pitch models report *notes*; a tab needs *pick strokes*. Tested on a real isolat
 
 Turn it off with `--no-cleanup` to compare against the model's raw output.
 
+### Measuring accuracy
+
+Guesswork is how a change that restores 212 missing roots can still make a tab worse, so
+tabify ships a benchmark: riffs whose tab is already known get rendered to audio with a
+real guitar tone, transcribed, and scored.
+
+```bash
+python benchmarks/benchmark.py              # score every piece
+python benchmarks/benchmark.py --no-cleanup # score the raw model output, for comparison
+```
+
+Two scores, because they fail for different reasons: **note F1** (right pitch, right time -
+blames the pitch model) and **tab F1** (also the right string and fret - blames the fingering
+search). Current mean across the benchmark, up from 65% / 46% before the cleanup step:
+
+| | note F1 | tab F1 |
+| --- | --- | --- |
+| drop-C chug riff | 87% | 87% |
+| drop-C chug riff, low end cut | 86% | 86% |
+| drop-C power chords | 84% | 74% |
+| standard clean arpeggio | 70% | 45% |
+| standard single-note line | 73% | 18% |
+| **mean** | **80%** | **62%** |
+
+Read those as a way to compare changes, not as real-world accuracy: the audio is
+synthesized, so it's kinder than a real recording. For scale, [TART (2026)](https://arxiv.org/html/2609.11904),
+the best published audio-to-tab system, reports 54% end-to-end tab F1 on real recordings -
+this is an unsolved problem, and heavily distorted downtuned guitar is its hardest corner.
+Recall is near 100% on riffs; the remaining gap is precision (extra notes), which is what
+the cleanup step keeps chipping away at.
+
 ## Limitations
 
 Automatic music transcription is still an open research problem, so here's what to expect:
