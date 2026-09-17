@@ -86,3 +86,23 @@ def test_system_for_step_clamps_out_of_range():
     layout = build_layout(events, STANDARD, subdivision=4)
     assert system_for_step(layout, 10_000) == len(layout.systems) - 1
     assert system_for_step(layout, -5) == 0
+
+
+def test_palm_mute_markers_sit_over_the_muted_run_only():
+    from tabify.fretting import Position, TabEvent
+
+    def stroke(step, palm_mute):
+        return TabEvent(step / 4, [Note(step / 4, 0.25, 40)], [Position(0, 0)], palm_mute=palm_mute)
+
+    events = [stroke(0, True), stroke(1, True), stroke(2, True), stroke(8, False)]
+    lines = render_tab(events, STANDARD, subdivision=4).splitlines()
+    pm_line, low_e = lines[-7], lines[-1]
+    assert low_e.startswith("E|-0-0-0-----------0")
+    # "PM" starts right above the first muted fret and the dashes end at the last muted one
+    assert pm_line.index("PM") == low_e.index("0")
+    assert pm_line.rstrip().endswith("-") and len(pm_line.rstrip()) == low_e.index("0-0-0") + len("0-0-0")
+
+
+def test_no_palm_mute_line_when_nothing_is_muted():
+    events = assign_frets([Note(0, 1, 40), Note(1, 1, 43)], STANDARD).events
+    assert "PM" not in render_tab(events, STANDARD)

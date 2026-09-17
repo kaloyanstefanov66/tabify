@@ -15,7 +15,7 @@ import importlib.util
 import sys
 import time
 
-from tabify import TabifyError
+from tabify import TabifyError, term
 from tabify.fretting import TabEvent
 from tabify.render import TabLayout, build_layout, format_system, system_for_step
 from tabify.rhythm import TimeSignature
@@ -97,15 +97,16 @@ def load_audio_file(path):
     return data, sample_rate
 
 
-def _clear_screen() -> None:
-    sys.stdout.write("\x1b[2J\x1b[H")
+def frame_text(lines: list[str]) -> str:
+    """One redraw: overwrite in place from the top-left, clearing leftovers, instead of clearing the
+    screen - a full clear on every frame flickers, and some terminals push each one into scrollback."""
+    return term.HOME + "".join(line + term.CLEAR_LINE_END + "\n" for line in lines) + term.CLEAR_SCREEN_END
 
 
 def _draw(layout: TabLayout, header: list[str], step: float, color: bool, status: str) -> None:
     system_index = system_for_step(layout, step)
     lines = [*header, "", *format_system(layout, system_index, color=color, highlight_step=step), "", status]
-    _clear_screen()
-    sys.stdout.write("\n".join(lines))
+    sys.stdout.write(frame_text(lines))
     sys.stdout.flush()
 
 
@@ -161,6 +162,11 @@ def play_along(
         sd.stop()
         playing = False
 
+    term.enable_ansi()
+    # Play on the alternate screen, so quitting puts the terminal back exactly as it was
+    # instead of leaving a wall of old frames behind.
+    sys.stdout.write(term.ALT_SCREEN_ON + term.CURSOR_HIDE)
+    sys.stdout.flush()
     try:
         with KeyReader() as keys:
             start(0.0)
@@ -175,7 +181,7 @@ def play_along(
                 tmm, tss = divmod(int(duration), 60)
                 status = (
                     f"[{'playing' if playing else 'paused '}] {mm:02d}:{ss:02d} / {tmm:02d}:{tss:02d}   "
-                    "space=pause/resume  <-/->=seek 5s  q=quit"
+                    f"space=pause/resume  <-/->=seek {seek_seconds:g}s  q=quit"
                 )
                 _draw(layout, header, step_at(now, bpm, subdivision), color, status)
 
@@ -194,4 +200,5 @@ def play_along(
                 time.sleep(0.05)
     finally:
         sd.stop()
-        _clear_screen()
+        sys.stdout.write(term.CURSOR_SHOW + term.ALT_SCREEN_OFF)
+        sys.stdout.flush()

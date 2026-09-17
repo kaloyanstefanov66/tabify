@@ -59,3 +59,40 @@ def test_quits_immediately_on_q(monkeypatch):
     play_along(events, STANDARD, np.zeros((44100, 2), dtype=np.float32), 44100, bpm=120)
     assert calls["play"] == 1
     assert calls["stop"] >= 1
+
+
+def test_frames_redraw_in_place_instead_of_clearing_the_screen():
+    from tabify import term
+    from tabify.player import frame_text
+
+    text = frame_text(["line one", "line two"])
+    assert "\x1b[2J" not in text  # a full clear floods scrollback in some terminals
+    assert text.startswith(term.HOME) and text.endswith(term.CLEAR_SCREEN_END)
+
+
+def test_play_along_uses_the_alternate_screen_and_restores_the_terminal(monkeypatch, capsys):
+    from tabify import term
+
+    monkeypatch.setattr(sd, "play", lambda *a, **k: None)
+    monkeypatch.setattr(sd, "stop", lambda: None)
+    monkeypatch.setattr("tabify.player.time.sleep", lambda s: None)
+
+    class QuitAfterTwoFrames:
+        reads = 0
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *exc):
+            return False
+
+        def read(self):
+            QuitAfterTwoFrames.reads += 1
+            return "q" if QuitAfterTwoFrames.reads >= 2 else None
+
+    monkeypatch.setattr("tabify.player.KeyReader", QuitAfterTwoFrames)
+    events = assign_frets([Note(0, 1, 40)], STANDARD).events
+    play_along(events, STANDARD, np.zeros((44100, 2), dtype=np.float32), 44100, bpm=120)
+    out = capsys.readouterr().out
+    assert out.index(term.ALT_SCREEN_ON) < out.index(term.HOME)
+    assert out.rstrip().endswith(term.ALT_SCREEN_OFF)

@@ -27,10 +27,12 @@ class TabLayout:
     bar_steps: int
     tuning: Tuning
     label_w: int
+    pm_rows: list[str]  # pm_rows[b] = "PM----" markers over bar b's palm-muted runs, same width as its rows
+    any_palm_mute: bool = False
 
 
 def _render_bar(steps: dict[int, TabEvent], first_step: int, bar_steps: int, n_strings: int):
-    """Row strings for one bar, plus each grid-step's (start_col, width) within those rows."""
+    """Row strings for one bar, its palm-mute marker row, and each grid-step's (start_col, width)."""
     rows = ["-" for _ in range(n_strings)]  # leading dash before the bar's first fret, tab convention
     offsets = []
     col = 1
@@ -44,7 +46,28 @@ def _render_bar(steps: dict[int, TabEvent], first_step: int, bar_steps: int, n_s
         for s in range(n_strings):
             rows[s] += frets.get(s, "").ljust(width, "-") + "-"
         col += width + 1
-    return rows, offsets
+
+    # "PM" at the first muted stroke of each run, dashes to the last one - a run ends at an unmuted stroke.
+    pm = [" "] * len(rows[0])
+    runs: list[list[int]] = []
+    open_run = False
+    for step, (start, width) in zip(range(first_step, first_step + bar_steps), offsets):
+        event = steps.get(step)
+        if event is None:
+            continue
+        if event.palm_mute:
+            if open_run:
+                runs[-1][1] = start + width
+            else:
+                runs.append([start, start + width])
+                open_run = True
+        else:
+            open_run = False
+    for start, end in runs:
+        for c in range(start, max(end, start + 2)):
+            pm[c] = "-"
+        pm[start], pm[start + 1] = "P", "M"
+    return rows, "".join(pm), offsets
 
 
 def build_layout(
@@ -60,10 +83,11 @@ def build_layout(
     n_strings = len(tuning.strings)
     label_w = max(len(label) for label in tuning.labels())
 
-    bars, offsets = [], []
+    bars, pm_rows, offsets = [], [], []
     for b in range(n_bars):
-        rows, offs = _render_bar(steps, b * bar_steps, bar_steps, n_strings)
+        rows, pm, offs = _render_bar(steps, b * bar_steps, bar_steps, n_strings)
         bars.append(rows)
+        pm_rows.append(pm)
         offsets.append(offs)
 
     systems: list[list[int]] = [[]]
@@ -76,7 +100,9 @@ def build_layout(
         systems[-1].append(b)
         line_len += bar_len
 
-    return TabLayout(bars, offsets, systems, bar_steps, tuning, label_w)
+    return TabLayout(
+        bars, offsets, systems, bar_steps, tuning, label_w, pm_rows, any(e.palm_mute for e in events),
+    )
 
 
 def system_for_step(layout: TabLayout, step: float) -> int:
@@ -107,6 +133,8 @@ def format_system(
     for b in system:
         numbers += str(b + 1).ljust(len(layout.bars[b][0]) + 1)
     out = [numbers.rstrip()]
+    if layout.any_palm_mute:
+        out.append((" " * (layout.label_w + 1) + "".join(layout.pm_rows[b] + " " for b in system)).rstrip())
 
     for s in reversed(range(n_strings)):
         line = labels[s].ljust(layout.label_w) + "|"

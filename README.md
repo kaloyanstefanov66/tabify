@@ -98,6 +98,8 @@ tabify song.mid --play                          # MIDI has no "original recordin
 | `--engine` | `auto`, `basic-pitch` (chords) or `pyin` (single notes) |
 | `--onset-threshold` | Note sensitivity for basic-pitch (lower finds more notes) |
 | `--min-note-ms` | Ignore notes shorter than this, to filter out noise |
+| `--no-cleanup` | Skip snapping to pick attacks, splitting merged chugs and restoring missing low roots (see [the cleanup step](#the-cleanup-step)) |
+| `--no-palm-mute` | Don't mark palm mutes (they're inferred from rhythm and string, not heard) |
 | `--midi-out FILE` | Save the transcribed notes as a MIDI file |
 | `--musicxml-out FILE` | Save as MusicXML (string/fret included), for Guitar Pro, TuxGuitar or MuseScore |
 | `--separate` | Split a full-band recording into instrument stems first, and tab each one (needs `[separate]`) |
@@ -156,10 +158,22 @@ free route: `tabify song.wav --musicxml-out song.musicxml`, open it in
 ## How it works
 
 ```
-audio ──► pitch detection ──► beat tracking ──► quantize to grid ──► fingering search ──► ASCII tab
-         (basic-pitch/pYIN)      (librosa)                        (Viterbi, least movement)
-MIDI  ─────────────────────────────────────────►┘
+audio ──► pitch detection ──► cleanup ──► beat tracking ──► quantize ──► fingering search ──► ASCII tab
+         (basic-pitch/pYIN)       │         (librosa)                   (Viterbi, least movement)
+MIDI  ────────────────────────────┼─────────────────────────────►┘
+                                  └ snap chord notes to real pick attacks, split merged chugs,
+                                    restore low roots the recording can't carry
 ```
+
+### The cleanup step
+
+Pitch models report *notes*; a tab needs *pick strokes*. Tested on a real isolated drop-C metal guitar track, the raw model output had three problems, and the cleanup step (`tabify.refine`) fixes each:
+
+- **Chord notes arrived tens of milliseconds apart** (up to 81 ms), so a stacked `6/6/6` came out as `6 - 6 - 6`. tabify now finds the actual pick attacks in the audio and snaps notes onto them.
+- **Fast repeated chugs merged into one long note**, since the pitch never changes between them. Notes still ringing through an attack where their chord was re-struck get split there.
+- **Low roots were missing.** That track has essentially nothing below ~89 Hz (the 63 Hz band sits 23 dB down), but a drop-C string's root is at 65 Hz - so `0/0/0` came out as just the fifth and octave, on the wrong strings. tabify measures where the recording's low end actually stops, and restores a root below that point when the notes above it form a power-chord shape, or when the root's own overtones are present.
+
+Turn it off with `--no-cleanup` to compare against the model's raw output.
 
 ## Limitations
 
@@ -167,7 +181,8 @@ Automatic music transcription is still an open research problem, so here's what 
 
 - **Works best on:** a clean recording of one guitar, such as a DI or close-mic recording, a riff, or a solo. With `--engine basic-pitch` (needs `[ml]`), chords, power chords and dyads (thirds, fourths, fifths, octaves) transcribe correctly - verified against a set of synthesized power chords and intervals, all detected with the right notes.
 - **Harder:** full band mixes, heavy distortion, and dense strumming. The notes will be rough.
-- It doesn't detect bends, slides, hammer-ons, or palm muting yet.
+- **Palm mutes are inferred, not heard.** On distorted guitar, muted and let-ring strokes measured the same decay and brightness - the distortion compresses both - so tabify marks `PM` on fast (8th note or quicker) repeated hits on the two lowest strings, the way they're played in practice. Expect it to be right for chug riffs and wrong on anything unconventional; `--no-palm-mute` turns it off.
+- It doesn't detect bends, slides or hammer-ons yet.
 - Beat tracking finds the beats but can't be sure where bar 1 starts. Use `--bpm` if the tempo is off.
 
 Treat the output as a strong first draft, then fix it by ear.

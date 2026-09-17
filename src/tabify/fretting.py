@@ -43,6 +43,7 @@ class TabEvent:
     start: float
     notes: list[Note]
     positions: list[Position]
+    palm_mute: bool = False
 
 
 @dataclass

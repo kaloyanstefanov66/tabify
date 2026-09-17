@@ -5,8 +5,9 @@ Two engines, both optional installs:
 * ``basic-pitch`` - Spotify's polyphonic model, handles chords (``pip install tabify-cli[ml]``)
 * ``pyin``        - librosa's monophonic pitch tracker, for single-note lines (``pip install tabify-cli[audio]``)
 
-Note times come back in seconds; we convert them to beats using librosa's
-beat tracker (or a user-supplied tempo) so the tab lines up with bars.
+Note times come back in seconds, get cleaned up against the audio's actual pick
+attacks and low end (see `tabify.refine`), then are converted to beats using
+librosa's beat tracker (or a user-supplied tempo) so the tab lines up with bars.
 """
 
 from __future__ import annotations
@@ -17,6 +18,7 @@ from pathlib import Path
 
 from tabify import TabifyError
 from tabify.notes import Note
+from tabify.refine import RefineReport, TimedNote as _TimedNote
 
 AUDIO_EXTENSIONS = {".wav", ".mp3", ".flac", ".ogg", ".m4a", ".aiff", ".aif"}
 ENGINES = ("auto", "basic-pitch", "pyin")
@@ -29,14 +31,7 @@ class AudioTranscription:
     notes: list[Note]  # in beats
     bpm: float
     engine: str
-
-
-@dataclass(frozen=True)
-class _TimedNote:
-    start: float  # seconds
-    end: float
-    pitch: int
-    velocity: int
+    refine: RefineReport | None = None
 
 
 def _has(module: str) -> bool:
@@ -145,6 +140,7 @@ def transcribe_audio(
     bpm: float | None = None,
     onset_threshold: float = 0.5,
     min_note_ms: float = 80.0,
+    refine: bool = True,
 ) -> AudioTranscription:
     path = Path(path)
     engine = resolve_engine(engine)
@@ -161,10 +157,16 @@ def transcribe_audio(
     else:
         timed = _pyin(y, sr, lowest, highest, min_note_ms)
 
+    report = None
+    if refine:
+        from tabify.refine import refine as refine_notes
+
+        timed, report = refine_notes(timed, y, sr, lowest=lowest)
+
     to_beats, tempo = _beat_mapper(y, sr, bpm)
     notes = []
     for n in timed:
         start = to_beats(n.start)
         notes.append(Note(start, max(to_beats(n.end) - start, 0.0), n.pitch, n.velocity))
     notes.sort(key=lambda n: (n.start, n.pitch))
-    return AudioTranscription(notes, tempo, engine)
+    return AudioTranscription(notes, tempo, engine, report)

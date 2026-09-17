@@ -57,17 +57,22 @@ class _Segment:
     duration: int
     positions: tuple[Position, ...]  # empty means a rest
     continued: bool = False  # True once this segment is what's left after a bar split
+    palm_mute: bool = False
 
 
 def _segments(events: list[TabEvent], subdivision: int, total_steps: int) -> list[_Segment]:
     segments = []
     cursor = 0
-    for e in sorted(events, key=lambda ev: ev.start):
+    ordered = sorted(events, key=lambda ev: ev.start)
+    for i, e in enumerate(ordered):
         start = round(e.start * subdivision)
         duration = max(1, round(max(n.duration for n in e.notes) * subdivision))
+        if i + 1 < len(ordered):
+            # One voice: a stroke that rings past the next one would overfill the measure.
+            duration = max(1, min(duration, round(ordered[i + 1].start * subdivision) - start))
         if start > cursor:
             segments.append(_Segment(cursor, start - cursor, ()))
-        segments.append(_Segment(start, duration, tuple(e.positions)))
+        segments.append(_Segment(start, duration, tuple(e.positions), palm_mute=e.palm_mute))
         cursor = start + duration
     if cursor < total_steps:
         segments.append(_Segment(cursor, total_steps - cursor, ()))
@@ -101,6 +106,7 @@ def to_musicxml(
     part = ET.SubElement(root, "part", id="P1")
 
     measure_no, step_i, seg_i = 1, 0, 0
+    in_palm_mute_run = False
     while step_i < total_steps:
         measure = ET.SubElement(part, "measure", number=str(measure_no))
         if measure_no == 1:
@@ -144,6 +150,13 @@ def to_musicxml(
                 ET.SubElement(rest, "type").text = note_type
                 if dotted:
                     ET.SubElement(rest, "dot")
+            elif seg.palm_mute and is_first and not in_palm_mute_run:
+                # Visible "P.M." text at the start of each muted run, which Guitar Pro, TuxGuitar and
+                # MuseScore all display; each note also carries <play><mute>palm</mute></play> below.
+                direction = ET.SubElement(measure, "direction", placement="below")
+                ET.SubElement(ET.SubElement(direction, "direction-type"), "words").text = "P.M."
+            if seg.positions:
+                in_palm_mute_run = seg.palm_mute
             for idx, pos in enumerate(seg.positions):
                 note_el = ET.SubElement(measure, "note")
                 if idx > 0:
@@ -171,6 +184,8 @@ def to_musicxml(
                 technical = ET.SubElement(notations, "technical")
                 ET.SubElement(technical, "string").text = str(n_strings - pos.string)  # string 1 = highest, tab convention
                 ET.SubElement(technical, "fret").text = str(pos.fret)
+                if seg.palm_mute:
+                    ET.SubElement(ET.SubElement(note_el, "play"), "mute").text = "palm"
 
             if piece_end >= seg_end:
                 seg_i += 1

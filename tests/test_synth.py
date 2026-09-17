@@ -127,3 +127,13 @@ def test_default_drive_table_only_covers_real_instruments():
 
     assert set(DEFAULT_DRIVE).issubset(ALL_PROGRAMS)
     assert all(0 <= d <= 1 for d in DEFAULT_DRIVE.values())
+
+
+def test_palm_muted_strokes_are_cut_short_in_the_render():
+    from tabify.fretting import Position, TabEvent
+    from tabify.synth import PALM_MUTE_SECONDS
+
+    held = TabEvent(0.0, [Note(0.0, 1.0, name_to_midi("E2"))], [Position(0, 0)])
+    muted = TabEvent(0.0, [Note(0.0, 1.0, name_to_midi("E2"))], [Position(0, 0)], palm_mute=True)
+    assert schedule([held], STANDARD, capo=0, bpm=60)[-1][0] == 1.0
+    assert schedule([muted], STANDARD, capo=0, bpm=60)[-1][0] == pytest.approx(PALM_MUTE_SECONDS)

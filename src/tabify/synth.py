@@ -76,6 +76,7 @@ def resolve_soundfont(path: str | None) -> Path:
 # different GM program number - a small soundfont's "Distortion Guitar" sample alone tends to
 # sound thin, so this adds the actual clipping/harmonics a distortion pedal or overdriven amp adds.
 DEFAULT_DRIVE = {"distortion": 0.75, "overdrive": 0.4, "muted": 0.15}
+PALM_MUTE_SECONDS = 0.12  # how long a palm-muted note rings in the synthesized render
 
 
 def _lowpass(audio, cutoff_hz: float, sample_rate: int):
@@ -123,6 +124,8 @@ def schedule(events: list[TabEvent], tuning: Tuning, capo: int, bpm: float) -> l
     raw: list[tuple[float, bool, int]] = []
     for e in events:
         duration = max(n.duration for n in e.notes)
+        if e.palm_mute:  # a muted string stops ringing almost immediately
+            duration = min(duration, PALM_MUTE_SECONDS / seconds_per_beat)
         for pos in e.positions:
             # pos.fret is relative to the capo (tab convention); the sounding pitch includes it.
             pitch = tuning.strings[pos.string] + capo + pos.fret

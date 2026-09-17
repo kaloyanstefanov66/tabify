@@ -61,6 +61,14 @@ def build_parser() -> argparse.ArgumentParser:
     g.add_argument("--engine", default="auto", choices=("auto", "basic-pitch", "pyin"), help="transcription engine")
     g.add_argument("--onset-threshold", type=float, default=0.5, help="basic-pitch note sensitivity, 0-1 (default: 0.5)")
     g.add_argument("--min-note-ms", type=float, default=80.0, help="ignore notes shorter than this (default: 80)")
+    g.add_argument(
+        "--no-cleanup", action="store_true",
+        help="skip snapping notes to pick attacks, splitting merged re-strikes and restoring missing low roots",
+    )
+    g.add_argument(
+        "--no-palm-mute", action="store_true",
+        help="don't mark palm mutes (they're inferred from fast repeated low-string hits, not heard)",
+    )
 
     g = p.add_argument_group("midi")
     g.add_argument("--track", type=int, help="only use this MIDI track index (default: all non-drum tracks)")
@@ -109,18 +117,9 @@ def build_parser() -> argparse.ArgumentParser:
 def _use_color(args: argparse.Namespace) -> bool:
     if args.no_color or args.output or os.environ.get("NO_COLOR") or not sys.stdout.isatty():
         return False
-    if os.name == "nt":
-        try:  # enable ANSI escape codes in the Windows console
-            import ctypes
+    from tabify.term import enable_ansi
 
-            kernel32 = ctypes.windll.kernel32
-            handle = kernel32.GetStdHandle(-11)
-            mode = ctypes.c_uint32()
-            if kernel32.GetConsoleMode(handle, ctypes.byref(mode)):
-                kernel32.SetConsoleMode(handle, mode.value | 0x0004)
-        except (AttributeError, OSError):
-            return False
-    return True
+    return enable_ansi()
 
 
 def _info(msg: str) -> None:
@@ -147,26 +146,41 @@ def _transcribe_path(path: Path, tuning, args: argparse.Namespace) -> tuple[list
         bpm=args.bpm,
         onset_threshold=args.onset_threshold,
         min_note_ms=args.min_note_ms,
+        refine=not args.no_cleanup,
     )
+    r = result.refine
+    if r:
+        roots = f", restored {r.roots_added} low root(s)" if r.roots_added else ""
+        _info(
+            f"Cleanup: {r.onsets} pick attacks found, {r.snapped} note(s) snapped to them, "
+            f"{r.splits} merged re-strike(s) split{roots} (recording's low end stops near {round(r.low_end_hz)} Hz)"
+        )
     # Beat tracking finds beats but not bar lines, so start bar 1 on the first played beat.
     return start_on_first_beat(result.notes), result.bpm, result.engine
 
 
-def _quantize_and_fret(notes: list[Note], time_sig: TimeSignature, tuning, args: argparse.Namespace):
+def _quantize_and_fret(
+    notes: list[Note], time_sig: TimeSignature, tuning, args: argparse.Namespace, from_audio: bool,
+):
     notes = align_to_bars(quantize(notes, args.grid), time_sig)
     opts = FretOptions(capo=args.capo, max_fret=args.max_fret, max_span=args.max_span)
     fretted = assign_frets(notes, tuning, opts)
     if fretted.dropped:
         _info(f"warning: skipped {len(fretted.dropped)} note(s) that don't fit this tuning/capo")
+    # Only for audio: a MIDI file's notes carry no technique information to base a guess on.
+    if from_audio and not args.no_palm_mute:
+        from tabify.techniques import infer_palm_mutes
+
+        fretted.events = infer_palm_mutes(fretted.events)
     return notes, fretted
 
 
 def _process_one(
     notes: list[Note], bpm: float, time_sig: TimeSignature, title: str, tuning,
-    args: argparse.Namespace, label: str | None,
+    args: argparse.Namespace, label: str | None, from_audio: bool = False,
 ) -> None:
     """Quantize, fret, render and export one instrument's notes."""
-    notes, fretted = _quantize_and_fret(notes, time_sig, tuning, args)
+    notes, fretted = _quantize_and_fret(notes, time_sig, tuning, args, from_audio)
 
     width = args.width or shutil.get_terminal_size((100, 24)).columns
     text = render_tab(
@@ -221,7 +235,7 @@ def _play_one(
 ) -> None:
     from tabify.player import load_audio_file, play_along
 
-    notes, fretted = _quantize_and_fret(notes, time_sig, tuning, args)
+    notes, fretted = _quantize_and_fret(notes, time_sig, tuning, args, from_audio=audio_path is not None)
     bpm = bpm or 120.0
 
     source = args.source or ("original" if audio_path else "synth")
@@ -304,7 +318,7 @@ def run(args: argparse.Namespace) -> int:
                 notes, bpm, engine = _transcribe_path(stems[name], stem_tuning, args)
                 ts = time_sig or TimeSignature()
                 _info(f"  Engine: {engine}, {len(notes)} notes, ~{round(bpm)} BPM")
-                _process_one(notes, bpm, ts, f"{title} ({name})", stem_tuning, args, name)
+                _process_one(notes, bpm, ts, f"{title} ({name})", stem_tuning, args, name, from_audio=True)
         return 0
 
     is_midi = path.suffix.lower() in MIDI_EXTENSIONS
@@ -324,7 +338,7 @@ def run(args: argparse.Namespace) -> int:
     if args.play:
         _play_one(notes, bpm, time_sig, title, tuning, args, None if is_midi else path)
     else:
-        _process_one(notes, bpm, time_sig, title, tuning, args, None)
+        _process_one(notes, bpm, time_sig, title, tuning, args, None, from_audio=not is_midi)
     return 0
 
 
