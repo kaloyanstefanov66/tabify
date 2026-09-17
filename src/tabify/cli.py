@@ -1,0 +1,271 @@
+"""Command-line interface."""
+
+from __future__ import annotations
+
+import argparse
+import os
+import shutil
+import sys
+from pathlib import Path
+
+from tabify import TabifyError, __version__
+from tabify.fretting import FretOptions, assign_frets
+from tabify.instruments import ALL_PROGRAMS, default_instrument
+from tabify.notes import Note
+from tabify.render import render_tab
+from tabify.rhythm import TimeSignature, align_to_bars, parse_time_signature, quantize, start_on_first_beat
+from tabify.tuning import TUNINGS, parse_tuning
+
+MIDI_EXTENSIONS = {".mid", ".midi"}
+
+
+def build_parser() -> argparse.ArgumentParser:
+    p = argparse.ArgumentParser(
+        prog="tabify",
+        description="Turn guitar recordings and MIDI files into playable guitar tabs.",
+        epilog="examples:\n"
+        "  tabify --demo\n"
+        "  tabify riff.wav\n"
+        "  tabify song.mid --tuning drop-d --capo 2 -o song.txt\n"
+        "  tabify solo.mp3 --bpm 96 --midi-out solo.mid",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
+    p.add_argument("input", nargs="?", help="audio file (wav, mp3, flac, ...) or MIDI file")
+    p.add_argument("-o", "--output", metavar="FILE", help="write the tab to FILE instead of the terminal")
+    p.add_argument("--demo", action="store_true", help="render a built-in example, no input needed")
+    p.add_argument("--version", action="version", version=f"tabify {__version__}")
+
+    g = p.add_argument_group("instrument")
+    g.add_argument("-t", "--tuning", default="standard", help="preset name or notes low-to-high, e.g. 'D2 A2 D3 G3 B3 E4'")
+    g.add_argument("--capo", type=int, default=0, help="capo fret (tab numbers are relative to the capo)")
+    g.add_argument("--max-fret", type=int, default=22, help="highest fret on your guitar (default: 22)")
+    g.add_argument("--max-span", type=int, default=4, help="max fret stretch within a chord (default: 4)")
+    g.add_argument("--list-tunings", action="store_true", help="show tuning presets and exit")
+
+    g = p.add_argument_group("full mix")
+    g.add_argument(
+        "--separate", action="store_true",
+        help="split a full-band recording into instrument stems first (via Demucs) and tab each one separately",
+    )
+    g.add_argument("--bass-tuning", default="bass", help="tuning used for the separated bass stem (default: bass)")
+
+    g = p.add_argument_group("rhythm")
+    g.add_argument("--bpm", type=float, help="tempo (default: read from MIDI or detected from audio)")
+    g.add_argument("--time-sig", help="time signature, e.g. 3/4 (default: from MIDI, else 4/4)")
+    g.add_argument(
+        "--grid", type=int, default=4, choices=(1, 2, 3, 4, 6, 8),
+        help="grid steps per beat: 2=8ths, 4=16ths, 3/6=triplets (default: 4)",
+    )
+
+    g = p.add_argument_group("audio")
+    g.add_argument("--engine", default="auto", choices=("auto", "basic-pitch", "pyin"), help="transcription engine")
+    g.add_argument("--onset-threshold", type=float, default=0.5, help="basic-pitch note sensitivity, 0-1 (default: 0.5)")
+    g.add_argument("--min-note-ms", type=float, default=80.0, help="ignore notes shorter than this (default: 80)")
+
+    g = p.add_argument_group("midi")
+    g.add_argument("--track", type=int, help="only use this MIDI track index (default: all non-drum tracks)")
+    g.add_argument("--midi-out", metavar="FILE", help="also save the transcribed notes as a MIDI file")
+    g.add_argument(
+        "--musicxml-out", metavar="FILE",
+        help="also save as MusicXML, importable into Guitar Pro, TuxGuitar or MuseScore",
+    )
+    g.add_argument(
+        "--instrument", choices=sorted(ALL_PROGRAMS), metavar="NAME",
+        help=f"tone for --midi-out and --audio-out: {', '.join(sorted(ALL_PROGRAMS))} (default: guessed from tuning)",
+    )
+
+    g = p.add_argument_group("audio rendering")
+    g.add_argument(
+        "--audio-out", metavar="FILE",
+        help="render actual audio (wav/flac/ogg) of the transcription with --instrument's tone, via FluidSynth",
+    )
+    g.add_argument("--soundfont", metavar="FILE", help="a .sf2 file for --audio-out (default: a small one, auto-downloaded once)")
+
+    g = p.add_argument_group("display")
+    g.add_argument("--title", help="title shown above the tab")
+    g.add_argument("--width", type=int, help="max line width (default: terminal width)")
+    g.add_argument("--no-color", action="store_true", help="disable colored output")
+    return p
+
+
+def _use_color(args: argparse.Namespace) -> bool:
+    if args.no_color or args.output or os.environ.get("NO_COLOR") or not sys.stdout.isatty():
+        return False
+    if os.name == "nt":
+        try:  # enable ANSI escape codes in the Windows console
+            import ctypes
+
+            kernel32 = ctypes.windll.kernel32
+            handle = kernel32.GetStdHandle(-11)
+            mode = ctypes.c_uint32()
+            if kernel32.GetConsoleMode(handle, ctypes.byref(mode)):
+                kernel32.SetConsoleMode(handle, mode.value | 0x0004)
+        except (AttributeError, OSError):
+            return False
+    return True
+
+
+def _info(msg: str) -> None:
+    print(msg, file=sys.stderr)
+
+
+def _suffixed(path: str, label: str | None) -> str:
+    """Insert `.{label}` before the extension, e.g. ('song.txt', 'bass') -> 'song.bass.txt'."""
+    if not label:
+        return path
+    p = Path(path)
+    return str(p.with_name(f"{p.stem}.{label}{p.suffix}"))
+
+
+def _transcribe_path(path: Path, tuning, args: argparse.Namespace) -> tuple[list[Note], float, str]:
+    """Run the configured engine over an audio file and return (notes, bpm, engine used)."""
+    from tabify.transcribe import transcribe_audio
+
+    result = transcribe_audio(
+        path,
+        lowest=tuning.strings[0] + args.capo,
+        highest=tuning.strings[-1] + args.max_fret,
+        engine=args.engine,
+        bpm=args.bpm,
+        onset_threshold=args.onset_threshold,
+        min_note_ms=args.min_note_ms,
+    )
+    # Beat tracking finds beats but not bar lines, so start bar 1 on the first played beat.
+    return start_on_first_beat(result.notes), result.bpm, result.engine
+
+
+def _process_one(
+    notes: list[Note], bpm: float, time_sig: TimeSignature, title: str, tuning,
+    args: argparse.Namespace, label: str | None,
+) -> None:
+    """Quantize, fret, render and export one instrument's notes."""
+    notes = align_to_bars(quantize(notes, args.grid), time_sig)
+
+    opts = FretOptions(capo=args.capo, max_fret=args.max_fret, max_span=args.max_span)
+    fretted = assign_frets(notes, tuning, opts)
+    if fretted.dropped:
+        _info(f"warning: skipped {len(fretted.dropped)} note(s) that don't fit this tuning/capo")
+
+    width = args.width or shutil.get_terminal_size((100, 24)).columns
+    text = render_tab(
+        fretted.events, tuning, time_sig=time_sig, subdivision=args.grid, width=max(width, 20),
+        title=title, capo=args.capo, bpm=bpm, color=_use_color(args),
+    )
+
+    if args.output:
+        out = _suffixed(args.output, label)
+        Path(out).write_text(text, encoding="utf-8")
+        _info(f"Wrote tab to {out}")
+    else:
+        if label:
+            print(f"=== {label} ===", file=sys.stdout)
+        sys.stdout.write(text)
+
+    instrument = args.instrument or default_instrument(tuning)
+
+    if args.midi_out:
+        from tabify.midi_io import write_midi
+
+        out = _suffixed(args.midi_out, label)
+        write_midi(out, notes, bpm or 120.0, time_sig, program=ALL_PROGRAMS[instrument])
+        _info(f"Wrote MIDI to {out}")
+
+    if args.musicxml_out:
+        from tabify.musicxml import to_musicxml
+
+        out = _suffixed(args.musicxml_out, label)
+        xml_text = to_musicxml(
+            fretted.events, tuning, time_sig=time_sig, subdivision=args.grid, bpm=bpm, title=title, capo=args.capo
+        )
+        Path(out).write_text(xml_text, encoding="utf-8")
+        _info(f"Wrote MusicXML to {out}")
+
+    if args.audio_out:
+        from tabify.synth import render_audio
+
+        out = _suffixed(args.audio_out, label)
+        _info(f"Rendering audio ({instrument}) ...")
+        render_audio(
+            fretted.events, tuning, out,
+            instrument=instrument, capo=args.capo, bpm=bpm or 120.0, soundfont=args.soundfont,
+        )
+        _info(f"Wrote audio to {out}")
+
+
+def run(args: argparse.Namespace) -> int:
+    if args.list_tunings:
+        for name, notes in TUNINGS.items():
+            print(f"{name:<16} {notes}")
+        return 0
+
+    tuning = parse_tuning(args.tuning)
+    if not 0 <= args.capo < args.max_fret:
+        raise TabifyError(f"capo must be between 0 and {args.max_fret - 1}")
+    if args.max_span < 1:
+        raise TabifyError("--max-span must be at least 1")
+
+    time_sig: TimeSignature | None = parse_time_signature(args.time_sig) if args.time_sig else None
+    title = args.title
+
+    if args.demo:
+        from tabify.demo import demo_notes
+
+        time_sig = time_sig or TimeSignature()
+        _process_one(demo_notes(), args.bpm or 90, time_sig, title or "tabify demo", tuning, args, None)
+        return 0
+
+    if not args.input:
+        raise TabifyError("no input file given (try: tabify --demo, or tabify --help)")
+    path = Path(args.input)
+    if not path.is_file():
+        raise TabifyError(f"file not found: {path}")
+    title = title or path.stem
+
+    if args.separate:
+        if path.suffix.lower() in MIDI_EXTENSIONS:
+            raise TabifyError("--separate needs an audio file, not MIDI (a MIDI file already has separate tracks - use --track)")
+        import tempfile
+
+        from tabify.separate import TRANSCRIBABLE, separate_stems
+
+        _info(f"Separating {path.name} into stems (this downloads a model on first use) ...")
+        with tempfile.TemporaryDirectory(prefix="tabify-") as tmp:
+            stems = separate_stems(path, tmp)
+            found = [name for name in TRANSCRIBABLE if name in stems]
+            if not found:
+                raise TabifyError(f"none of {TRANSCRIBABLE} were found in the separated stems: {sorted(stems)}")
+            for name in found:
+                stem_tuning = parse_tuning(args.bass_tuning) if name == "bass" else tuning
+                _info(f"Transcribing {name} stem ...")
+                notes, bpm, engine = _transcribe_path(stems[name], stem_tuning, args)
+                ts = time_sig or TimeSignature()
+                _info(f"  Engine: {engine}, {len(notes)} notes, ~{round(bpm)} BPM")
+                _process_one(notes, bpm, ts, f"{title} ({name})", stem_tuning, args, name)
+        return 0
+
+    if path.suffix.lower() in MIDI_EXTENSIONS:
+        from tabify.midi_io import read_midi
+
+        content = read_midi(path, args.track)
+        notes = content.notes
+        bpm = args.bpm or content.bpm
+        time_sig = time_sig or content.time_sig
+    else:
+        _info(f"Transcribing {path.name} ...")
+        notes, bpm, engine = _transcribe_path(path, tuning, args)
+        _info(f"Engine: {engine}, {len(notes)} notes, ~{round(bpm)} BPM")
+
+    time_sig = time_sig or TimeSignature()
+    _process_one(notes, bpm, time_sig, title, tuning, args, None)
+    return 0
+
+
+def main(argv: list[str] | None = None) -> int:
+    args = build_parser().parse_args(argv)
+    try:
+        return run(args)
+    except TabifyError as exc:
+        _info(f"tabify: error: {exc}")
+        return 1
+    except KeyboardInterrupt:
+        return 130
