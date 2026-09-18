@@ -5,7 +5,7 @@ Thanks for helping make tabify better!
 ## Setup
 
 ```bash
-git clone https://github.com/OWNER/tabify
+git clone https://github.com/kaloyanstefanov66/tabify
 cd tabify
 python -m venv .venv
 # Windows: .venv\Scripts\activate    macOS/Linux: source .venv/bin/activate

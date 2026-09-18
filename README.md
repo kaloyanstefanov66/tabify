@@ -2,7 +2,7 @@
 
 **Turn guitar recordings and MIDI files into guitar tabs you can actually play, right in your terminal.**
 
-[![CI](https://github.com/OWNER/tabify/actions/workflows/ci.yml/badge.svg)](https://github.com/OWNER/tabify/actions/workflows/ci.yml)
+[![CI](https://github.com/kaloyanstefanov66/tabify/actions/workflows/ci.yml/badge.svg)](https://github.com/kaloyanstefanov66/tabify/actions/workflows/ci.yml)
 [![PyPI](https://img.shields.io/pypi/v/tabify-cli)](https://pypi.org/project/tabify-cli/)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 

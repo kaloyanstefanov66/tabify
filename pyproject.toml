@@ -64,8 +64,8 @@ dev = ["pytest>=8"]
 tabify = "tabify.cli:main"
 
 [project.urls]
-Homepage = "https://github.com/OWNER/tabify"
-Issues = "https://github.com/OWNER/tabify/issues"
+Homepage = "https://github.com/kaloyanstefanov66/tabify"
+Issues = "https://github.com/kaloyanstefanov66/tabify/issues"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/tabify"]
