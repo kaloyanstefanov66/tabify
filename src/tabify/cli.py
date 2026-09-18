@@ -51,6 +51,10 @@ def build_parser() -> argparse.ArgumentParser:
         help="split a full-band recording into instrument stems first (via Demucs) and tab each one separately",
     )
     g.add_argument("--bass-tuning", default="bass", help="tuning used for the separated bass stem (default: bass)")
+    g.add_argument(
+        "--no-auto-separate", action="store_true",
+        help="tab a full band mix as one part instead of splitting it up (every instrument lands in the same tab)",
+    )
 
     g = p.add_argument_group("rhythm")
     g.add_argument("--bpm", type=float, help="tempo (default: read from MIDI or detected from audio)")
@@ -291,6 +295,64 @@ def _play_one(
     )
 
 
+def _is_full_mix(path: Path, tuning, args: argparse.Namespace) -> bool:
+    """Warn when a whole band was handed in as if it were one guitar, and separate if we can.
+
+    Without this, every instrument gets faithfully tabbed into the same part - the bass on the
+    low string, keys, vocals - which reads as nonsense rather than as a failure.
+    """
+    if args.separate or args.no_auto_separate or tuning is None:
+        return False  # with --tuning auto there's no lowest string to measure against yet
+
+    import importlib.util
+
+    import librosa
+
+    from tabify.mixcheck import looks_like_full_mix
+
+    try:
+        y, sr = librosa.load(str(path), sr=22050, mono=True, duration=40)
+    except Exception:  # if it won't load here, the real load will report it properly
+        return False
+    is_mix, share = looks_like_full_mix(y, sr, tuning.strings[0])
+    if not is_mix:
+        return False
+
+    _info(
+        f"This sounds like a full band mix: {share:.0%} of its energy is below the lowest string of "
+        f"{tuning.name}, which a guitar can't make - that's bass and kick drum."
+    )
+    if importlib.util.find_spec("demucs") is not None:
+        _info("Splitting the instruments apart first, so they don't all land in one tab.")
+        return True
+    _info(
+        "Every instrument will be tabbed into the same part. Either give tabify an isolated guitar "
+        'track, or install separation: pip install "tabify-cli[separate]"\n'
+        "         (--no-auto-separate silences this and tabs the mix as-is.)"
+    )
+    return False
+
+
+def _separate_and_process(path: Path, title: str, tuning, time_sig, args: argparse.Namespace) -> None:
+    import tempfile
+
+    from tabify.separate import TRANSCRIBABLE, separate_stems
+
+    _info(f"Separating {path.name} into stems (this downloads a model on first use) ...")
+    with tempfile.TemporaryDirectory(prefix="tabify-") as tmp:
+        stems = separate_stems(path, tmp)
+        found = [name for name in TRANSCRIBABLE if name in stems]
+        if not found:
+            raise TabifyError(f"none of {TRANSCRIBABLE} were found in the separated stems: {sorted(stems)}")
+        for name in found:
+            stem_tuning = parse_tuning(args.bass_tuning) if name == "bass" else tuning
+            _info(f"Transcribing {name} stem ...")
+            notes, bpm, engine, stem_tuning = _transcribe_path(stems[name], stem_tuning, args)
+            ts = time_sig or TimeSignature()
+            _info(f"  Engine: {engine}, {len(notes)} notes, ~{round(bpm)} BPM")
+            _process_one(notes, bpm, ts, f"{title} ({name})", stem_tuning, args, name, from_audio=True)
+
+
 def run(args: argparse.Namespace) -> int:
     if args.list_tunings:
         from tabify.tuning import ALIASES
@@ -343,31 +405,15 @@ def run(args: argparse.Namespace) -> int:
             raise TabifyError(f"file not found: {path}")
     title = title or path.stem
 
-    if args.separate:
+    is_midi = path.suffix.lower() in MIDI_EXTENSIONS
+    if args.separate or (not is_midi and _is_full_mix(path, tuning, args)):
         if args.play:
             raise TabifyError("--play can't be combined with --separate yet - tab a stem to a file first, then play it")
-        if path.suffix.lower() in MIDI_EXTENSIONS:
+        if is_midi:
             raise TabifyError("--separate needs an audio file, not MIDI (a MIDI file already has separate tracks - use --track)")
-        import tempfile
-
-        from tabify.separate import TRANSCRIBABLE, separate_stems
-
-        _info(f"Separating {path.name} into stems (this downloads a model on first use) ...")
-        with tempfile.TemporaryDirectory(prefix="tabify-") as tmp:
-            stems = separate_stems(path, tmp)
-            found = [name for name in TRANSCRIBABLE if name in stems]
-            if not found:
-                raise TabifyError(f"none of {TRANSCRIBABLE} were found in the separated stems: {sorted(stems)}")
-            for name in found:
-                stem_tuning = parse_tuning(args.bass_tuning) if name == "bass" else tuning
-                _info(f"Transcribing {name} stem ...")
-                notes, bpm, engine, stem_tuning = _transcribe_path(stems[name], stem_tuning, args)
-                ts = time_sig or TimeSignature()
-                _info(f"  Engine: {engine}, {len(notes)} notes, ~{round(bpm)} BPM")
-                _process_one(notes, bpm, ts, f"{title} ({name})", stem_tuning, args, name, from_audio=True)
+        _separate_and_process(path, title, tuning, time_sig, args)
         return 0
 
-    is_midi = path.suffix.lower() in MIDI_EXTENSIONS
     if is_midi:
         from tabify.midi_io import read_midi
 

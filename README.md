@@ -211,6 +211,27 @@ Tuning: drop-d (D2 A2 D3 G3 B3 E4), fit 1.55; next best half-step-down (1.51), s
          tunings. Pass --tuning if you know it.
 ```
 
+### Full mixes are noticed, not silently mangled
+
+Handed a whole band, a transcriber will faithfully tab *everything it hears* into one guitar
+part - the bass on the low string, keys, vocals - and the result reads as nonsense rather
+than as a failure, which is worse. So tabify checks first:
+
+```console
+This sounds like a full band mix: 17% of its energy is below the lowest string of standard,
+which a guitar can't make - that's bass and kick drum.
+Splitting the instruments apart first, so they don't all land in one tab.
+```
+
+The giveaway is energy below the instrument's lowest string, which a guitar can't produce
+but a kick drum and bass guitar produce plenty of. Across real files, isolated tracks measure
+0.000-0.001 of their energy down there and mixes measure 0.11-0.29 - two orders of magnitude
+apart. It's judged against the instrument *you asked for*, so a bass stem reads as clean when
+you say `--tuning bass` and as "something else is in here" when you call it a guitar.
+
+With `[separate]` installed, tabify splits the mix and tabs each instrument separately. Without
+it, you get told what to install. `--no-auto-separate` tabs the mix as one part anyway.
+
 ### Full-mix support and its real limit
 
 `--separate` uses [Demucs](https://github.com/facebookresearch/demucs) to pull guitar and bass out of a full band recording before tabbing each one. This works well *across* instrument types.
