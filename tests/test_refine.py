@@ -13,6 +13,7 @@ from tabify.refine import (  # noqa: E402
     low_end_floor,
     overtone_evidence,
     collapse_to_roots,
+    plays_chords,
     snap_to_onsets,
     split_restrikes,
 )
@@ -173,3 +174,30 @@ def test_a_lead_note_high_on_the_neck_grows_no_bass_note_underneath():
     lead = guitar([64])  # E4
     _, added, _ = collapse_to_roots([note(0, 0.4, 64)], lead, SR, lowest=40, floor_hz=250)
     assert added == 0
+
+
+# --- is this piece played in chords? ---------------------------------------------------
+
+
+def test_power_chord_riffing_reads_as_chordal():
+    assert plays_chords([{C2, G2, C3}, {C2, G2}, {C2}, {C2, G2, C3}])
+
+
+def test_a_single_note_line_does_not():
+    assert not plays_chords([{60}, {62}, {64}, {65}, {67}])
+
+
+def test_one_chord_in_a_long_melody_is_not_enough_to_call_it_chordal():
+    assert not plays_chords([{C2, G2}] + [{60 + i} for i in range(9)])
+
+
+def test_a_lone_chug_is_judged_on_its_restored_root_not_its_harmonics():
+    # C3 + G3 look like a root and a fifth, but they are the 2nd and 3rd harmonics of a C2
+    # that collapse_to_roots puts back. Judged on the heard notes alone this riff would read
+    # as chordal and keep an octave that was never played.
+    y = guitar([C2], highpass=90)
+    notes, added, dropped = collapse_to_roots(
+        [note(0, 0.4, C3), note(0, 0.4, 55)], y, SR, lowest=C2, floor_hz=89
+    )
+    assert added == 1 and dropped == 2
+    assert sorted(n.pitch for n in notes) == [C2]

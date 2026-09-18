@@ -269,6 +269,11 @@ as one part anyway. If separation isn't available on your Python, `tabify --doct
 
 `--separate` uses [Demucs](https://github.com/facebookresearch/demucs) to pull guitar and bass out of a full band recording before tabbing each one. This works well *across* instrument types.
 
+`--play` works with separation: tabify splits the mix, then plays the part you picked on its
+own while its tab scrolls. Following a guitar tab against the guitar alone is far easier than
+against a full band, which is most of the point of separating. Pick one part with `--stems`,
+since play-along follows one at a time.
+
 It can't reliably split **two guitars playing at the same time** into two separate tracks - no current source-separation model can do that for two instances of the same instrument, tabify included. A recording with two interleaved guitar parts will still come out as one, more complex, guitar tab rather than two.
 
 ### Real audio rendering
@@ -372,6 +377,12 @@ Against my_riff.txt: 32 strokes written, 36 heard
   where they differ:
     stroke    2: tab says C2                   tabify heard C2 C3
 ```
+
+`--compare` reads **Guitar Pro files** (`.gp`) directly, so a tab you already own works as
+ground truth without retyping it: tabify picks the first guitar or bass track, or the one you
+name with `--compare-track`. Scores usually run the whole song while a recording is one
+section, so `--compare-bars N` limits the comparison to the first N bars. Hand-written ASCII
+tab works too.
 
 The two are lined up the way two versions of a text are, so an extra chug or a missed note
 doesn't mark everything after it as wrong, and strokes are compared by the notes they sound

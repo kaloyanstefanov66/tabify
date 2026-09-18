@@ -279,6 +279,32 @@ def overtone_evidence(spectra: _Spectra, t0: float, t1: float, candidate: int, p
     return float(own_levels.mean() / (ref_levels.mean() + _EPS))
 
 
+# How much of a piece has to be chordal before a bare octave is read as a fretted string
+# rather than a harmonic. Measured on real playing: in drop-tuned power-chord riffing, 71 of
+# 77 strokes carried an octave, so the octave is the rule there, not the exception.
+CHORDAL_SHARE = 0.25
+
+
+def plays_chords(strokes) -> bool:
+    """Whether this piece is played in power chords rather than single notes.
+
+    An octave above a root is either a fretted string or the root's own 2nd harmonic, and
+    they land on exactly the same frequencies - measuring the spectrum cannot separate them
+    (checked against a real tab: the two populations overlap almost completely). What does
+    separate them is what the player is doing. Someone riffing on power chords puts a fifth
+    under most strokes, and their octaves are real strings; someone playing single notes has
+    no fifths, and an apparent octave is the harmonic. So the piece decides, not the stroke.
+    """
+    fifths = total = 0
+    for pitches in strokes:
+        if not pitches:
+            continue
+        total += 1
+        root = min(pitches)
+        fifths += any(p - root == 7 for p in pitches)
+    return bool(total) and fifths / total >= CHORDAL_SHARE
+
+
 # Intervals (semitones) above a root that a stroke's notes may legitimately sit at: the
 # fifth and octave of a power chord, plus the root's own 2nd-6th harmonics.
 _ROOT_INTERVALS = (0, 7, 12, 19, 24, 28, 31)
@@ -288,6 +314,7 @@ _OVERTONE_ONLY = (19, 24, 28, 31)
 
 def collapse_to_roots(
     notes: list[TimedNote], y: np.ndarray, sr: int, *, lowest: int, floor_hz: float, evidence: float = 0.35,
+    keep_octaves: bool | None = None,
 ):
     """Rebuild each stroke around the note that actually produced it. Returns (notes, added, dropped).
 
@@ -307,8 +334,10 @@ def collapse_to_roots(
     for n in notes:
         groups.setdefault(n.start, []).append(n)
 
+
     added: list[TimedNote] = []
     drop: set[int] = set()
+    roots: dict[float, int] = {}
     for start, group in groups.items():
         pitches = sorted({n.pitch for n in group})
         end = min(n.end for n in group)
@@ -334,16 +363,29 @@ def collapse_to_roots(
         if scored:
             root = max(scored)[1]
             added.append(TimedNote(start, end, root, max(n.velocity for n in group)))
-        # An octave with a fifth under it is a power chord's top string; an octave with no fifth
-        # is far more likely the root's own 2nd harmonic - which is how a lone chug kept coming
-        # back as two notes. Physically the two are indistinguishable (an octave string and a
-        # 2nd harmonic land on the same frequencies), so this is a bet, and the benchmark says
-        # it's the right one: mean note F1 82% -> 89%. It costs a few real octaves on held power
-        # chords whose fifth the model missed, which is the trade being made.
+        roots[start] = root
+
+    # Whether this piece is played in chords has to be judged against the restored roots, not
+    # the notes as heard: a lone chug reaches the model as its 2nd and 3rd harmonics, which
+    # look exactly like a root and a fifth until the real root underneath them is found.
+    if keep_octaves is None:
+        keep_octaves = plays_chords(
+            [{n.pitch for n in group} | {roots[start]} for start, group in groups.items()]
+        )
+
+    for start, group in groups.items():
+        pitches = sorted({n.pitch for n in group})
+        root = roots[start]
+        # An octave with a fifth under it is a power chord's top string and always survives.
+        # A bare octave is the ambiguous case, and what it means depends on the piece: in
+        # single-note playing it is the root's own 2nd harmonic, which is how a lone chug kept
+        # coming back as two notes, while in power-chord riffing it is a string whose fifth the
+        # model happened to miss. `plays_chords` decides which kind of piece this is.
         has_fifth = any(p - root == 7 for p in pitches)
         for n in group:
             interval = n.pitch - root
-            if interval in _OVERTONE_ONLY or (interval == 12 and not has_fifth):
+            lone_octave = interval == 12 and not has_fifth and not keep_octaves
+            if interval in _OVERTONE_ONLY or lone_octave:
                 drop.add(id(n))
 
     kept = [n for n in notes if id(n) not in drop]

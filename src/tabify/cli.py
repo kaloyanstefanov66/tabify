@@ -17,6 +17,7 @@ from tabify.rhythm import TimeSignature, align_to_bars, parse_time_signature, qu
 from tabify.tuning import TUNINGS, parse_tuning
 
 MIDI_EXTENSIONS = {".mid", ".midi"}
+GP_EXTENSIONS = {".gp"}
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -126,8 +127,17 @@ def build_parser() -> argparse.ArgumentParser:
     g = p.add_argument_group("checking")
     g.add_argument(
         "--compare", metavar="TABFILE",
-        help="compare the transcription against a tab you already have (ASCII tab), and report "
-        "what each side has that the other doesn't",
+        help="compare the transcription against a tab you already have (a Guitar Pro .gp file "
+        "or ASCII tab), and report what each side has that the other doesn't",
+    )
+    g.add_argument(
+        "--compare-track", metavar="NAME",
+        help="which track of a Guitar Pro score to compare against (default: the first guitar or bass)",
+    )
+    g.add_argument(
+        "--compare-bars", type=int, metavar="N",
+        help="only compare the first N bars of the score - use it when the tab runs the whole "
+        "song but the recording is just a section",
     )
 
     g = p.add_argument_group("display")
@@ -356,12 +366,26 @@ def _pitches_of(strokes, tuning, capo: int = 0) -> list[set[int]]:
     return [{tuning.strings[s] + capo + f for s, f in stroke} for stroke in strokes]
 
 
+def _read_reference(args: argparse.Namespace):
+    """The tab to compare against - a Guitar Pro score or hand-written ASCII."""
+    path = Path(args.compare)
+    if path.suffix.lower() in GP_EXTENSIONS:
+        from tabify.gpfile import read_gp
+
+        written = read_gp(path, track=args.compare_track, bars=args.compare_bars)
+        _info(f"Comparing against the {written.metadata.get('track', 'first fretted')} track of {path.name}.")
+        return written
+
+    from tabify.tabfile import read_tab_file
+
+    return read_tab_file(path)
+
+
 def _compare_with_tab(fretted, tuning, args: argparse.Namespace) -> None:
     """Say how a transcription differs from a tab someone already has."""
     from tabify.align import agreement, align
-    from tabify.tabfile import read_tab_file
 
-    written = read_tab_file(args.compare)
+    written = _read_reference(args)
     reference_tuning = written.tuning or tuning
     if reference_tuning.strings != tuning.strings:
         _info(
@@ -418,12 +442,25 @@ def _separate_and_process(path: Path, title: str, tuning, time_sig, args: argpar
         if others:
             _info(f"Also in this track: {', '.join(others)} - tab those with --stems {','.join(others)}")
 
+        # Playing along is one part at a time - there is a single screen and a single pair of
+        # ears - so say which one rather than silently picking.
+        if args.play and len(found) > 1:
+            raise TabifyError(
+                f"--play follows one part at a time, and {', '.join(found)} were found. "
+                f"Pick one, e.g. --stems {found[0]}"
+            )
+
         for name in found:
             stem_tuning = parse_tuning(args.bass_tuning) if name == "bass" else tuning
             _info(f"Transcribing {name} stem ...")
             notes, bpm, engine, stem_tuning = _transcribe_path(stems[name], stem_tuning, args)
             ts = time_sig or TimeSignature()
             _info(f"  Engine: {engine}, {len(notes)} notes, ~{round(bpm)} BPM")
+            if args.play:
+                # Play the separated stem, not the original mix: following a guitar tab is far
+                # easier against the guitar alone, which is the whole point of separating.
+                _play_one(notes, bpm, ts, f"{title} ({name})", stem_tuning, args, stems[name])
+                continue
             # Only tag the output with the stem's name when there's more than one to tell apart,
             # so asking for a single part writes exactly the file you asked for.
             label = name if len(found) > 1 else None
@@ -490,8 +527,6 @@ def run(args: argparse.Namespace) -> int:
 
     is_midi = path.suffix.lower() in MIDI_EXTENSIONS
     if args.separate or (not is_midi and _is_full_mix(path, tuning, args)):
-        if args.play:
-            raise TabifyError("--play can't be combined with --separate yet - tab a stem to a file first, then play it")
         if is_midi:
             raise TabifyError("--separate needs an audio file, not MIDI (a MIDI file already has separate tracks - use --track)")
         _separate_and_process(path, title, tuning, time_sig, args)
