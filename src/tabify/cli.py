@@ -42,8 +42,9 @@ def build_parser() -> argparse.ArgumentParser:
 
     g = p.add_argument_group("instrument")
     g.add_argument(
-        "-t", "--tuning", default="standard",
-        help="preset name, notes low-to-high ('D2 A2 D3 G3 B3 E4'), or 'auto' to work it out from the audio",
+        "-t", "--tuning", default=None,
+        help="preset name, notes low-to-high ('D2 A2 D3 G3 B3 E4'), or 'auto'. Default: work it "
+        "out from the audio (MIDI has no tone to judge from, so that defaults to standard)",
     )
     g.add_argument("--capo", type=int, default=0, help="capo fret (tab numbers are relative to the capo)")
     g.add_argument("--max-fret", type=int, default=22, help="highest fret on your guitar (default: 22)")
@@ -489,8 +490,12 @@ def run(args: argparse.Namespace) -> int:
         print("\nAny other tuning: pass the open strings low to high, e.g. --tuning 'D2 A2 D3 G3 B3 E4'")
         return 0
 
+    # Working the tuning out from the audio is the default. Guessing standard and tabbing a
+    # drop-tuned riff a few frets off is worse than a moment of listening, and someone who
+    # already knows their tuning can still say so.
+    requested = (args.tuning or "").strip().lower()
     # None means "work it out from the audio"; every path that can't (MIDI, --demo) checks below.
-    tuning = None if args.tuning.strip().lower() == "auto" else parse_tuning(args.tuning)
+    tuning = None if requested in ("", "auto") else parse_tuning(args.tuning)
     if not 0 <= args.capo < args.max_fret:
         raise TabifyError(f"capo must be between 0 and {args.max_fret - 1}")
     if args.max_span < 1:
@@ -536,7 +541,9 @@ def run(args: argparse.Namespace) -> int:
         from tabify.midi_io import read_midi
 
         if tuning is None:
-            raise TabifyError("--tuning auto needs audio to listen to; a MIDI file has no tone to judge from")
+            if requested == "auto":
+                raise TabifyError("--tuning auto needs audio to listen to; a MIDI file has no tone to judge from")
+            tuning = parse_tuning("standard")  # no audio to detect from, so fall back rather than fail
         content = read_midi(path, args.track)
         notes = content.notes
         bpm = args.bpm or content.bpm

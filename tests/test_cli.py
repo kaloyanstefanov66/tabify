@@ -58,3 +58,38 @@ def test_audio_out_without_fluidsynth_gives_actionable_error(capsys, monkeypatch
 def test_instrument_flag_rejects_unknown_name(capsys):
     with pytest.raises(SystemExit):
         main(["--demo", "--instrument", "kazoo"])
+
+
+def test_midi_without_a_tuning_falls_back_to_standard(tmp_path, capsys):
+    """Detection is the default, but MIDI has no tone to detect from - that must not be fatal."""
+    mid = tmp_path / "riff.mid"
+    write_midi(mid, [Note(0, 1, 40), Note(1, 1, 45)])
+    assert main([str(mid), "--no-color", "--width", "80"]) == 0
+    assert "e|" in capsys.readouterr().out
+
+
+def test_asking_for_auto_on_midi_still_says_why_it_cannot(tmp_path, capsys):
+    mid = tmp_path / "riff.mid"
+    write_midi(mid, [Note(0, 1, 40)])
+    assert main([str(mid), "--tuning", "auto"]) == 1
+    captured = capsys.readouterr()  # errors go to stderr, so they don't land in a piped tab
+    assert "no tone to judge from" in captured.err + captured.out
+
+
+def test_audio_detects_the_tuning_when_none_was_asked_for(tmp_path, monkeypatch):
+    """No --tuning on an audio file means listen, rather than assume E standard."""
+    from tabify import cli
+
+    seen = {}
+
+    def fake(path, tuning, args):
+        seen["tuning"] = tuning
+        raise SystemExit(0)
+
+    monkeypatch.setattr(cli, "_transcribe_path", fake)
+    monkeypatch.setattr(cli, "_is_full_mix", lambda *a, **k: False)
+    audio = tmp_path / "riff.wav"
+    audio.write_bytes(b"RIFF....WAVE")
+    with pytest.raises(SystemExit):
+        main([str(audio), "--no-color"])
+    assert seen["tuning"] is None  # None means "work it out from the audio"

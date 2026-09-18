@@ -110,7 +110,8 @@ tabify --demo
 tabify song.wav                         # print the tab
 tabify song.mp3 -o song.txt             # save it to a file
 tabify song.mid --track 2               # tab one track of a MIDI file
-tabify riff.wav --tuning drop-d         # alternate tunings
+tabify riff.wav                         # tuning worked out from the audio
+tabify riff.wav --tuning drop-d         # or say it yourself
 tabify riff.wav --capo 3                # frets shown relative to the capo
 tabify riff.wav --tuning "D2 G2 D3 G3 B3 D4"   # any custom tuning
 tabify solo.flac --bpm 120 --grid 2     # set the tempo, snap to 8th notes
@@ -143,7 +144,7 @@ tabify song.mid --play                          # MIDI has no "original recordin
 
 | Option | What it does |
 | --- | --- |
-| `-t, --tuning` | Preset or notes from low to high. 30 presets: every drop tuning from `drop-d` down to `drop-f#` (`drop-c#`, `drop-a#`, `drop-g#`, …), whole-guitar downtunings (`half-step-down` … `a-standard`), `open-g`/`open-d`/`open-e`/`open-c`, `dadgad`, 7- and 8-string, and bass. Flat spellings work too (`drop-db` = `drop-c#`). See `tabify --list-tunings` |
+| `-t, --tuning` | Preset or notes from low to high. Defaults to detecting it from the audio; MIDI has no tone to judge from, so that defaults to `standard`. 30 presets: every drop tuning from `drop-d` down to `drop-f#` (`drop-c#`, `drop-a#`, `drop-g#`, …), whole-guitar downtunings (`half-step-down` … `a-standard`), `open-g`/`open-d`/`open-e`/`open-c`, `dadgad`, 7- and 8-string, and bass. Flat spellings work too (`drop-db` = `drop-c#`). See `tabify --list-tunings` |
 | `--capo N` | Capo fret |
 | `--max-span N` | Biggest fret stretch allowed within a chord (default 4) |
 | `--max-fret N` | Highest fret on your guitar (default 22) |
@@ -154,7 +155,7 @@ tabify song.mid --play                          # MIDI has no "original recordin
 | `--min-note-ms` | Ignore notes shorter than this, to filter out noise |
 | `--no-cleanup` | Skip snapping to pick attacks, splitting merged chugs and restoring missing low roots (see [the cleanup step](#the-cleanup-step)) |
 | `--no-palm-mute` | Don't mark palm mutes (they're inferred from rhythm and string, not heard) |
-| `--tuning auto` | Work the tuning out from the audio, and say how confident it is (see [detecting the tuning](#detecting-the-tuning)) |
+| `--tuning auto` | Work the tuning out from the audio, and say how confident it is (see [detecting the tuning](#detecting-the-tuning)). This is the default for audio, so you rarely need to type it |
 | `--midi-out FILE` | Save the transcribed notes as a MIDI file |
 | `--musicxml-out FILE` | Save as MusicXML (string/fret included), for Guitar Pro, TuxGuitar or MuseScore |
 | `--separate` | Force separation even if the track doesn't look like a mix |
