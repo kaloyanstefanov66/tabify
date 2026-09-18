@@ -147,14 +147,24 @@ def test_restores_a_single_notes_root_only_with_overtone_evidence():
 
 
 def test_collapses_a_stroke_heard_only_as_overtones_back_to_its_root():
-    # A lone drop-C chug reaches the pitch model as C3 + G3 (its 2nd and 3rd harmonics)
-    # with the root itself missing: the root should come back and the pure overtone should go.
+    # A lone drop-C chug reaches the pitch model as C3 + G3 (its 2nd and 3rd harmonics) with
+    # the root itself missing. One note was played, so one note should come out: the root
+    # comes back and both overtones go. The octave only survives when a fifth came with it,
+    # which is what tells a power chord's top string from the root's own 2nd harmonic.
     y = guitar([C2], highpass=90)
     notes, added, dropped = collapse_to_roots(
         [note(0, 0.4, C3), note(0, 0.4, 55)], y, SR, lowest=C2, floor_hz=89
     )
-    assert added == 1 and dropped == 1
-    assert sorted(n.pitch for n in notes) == [C2, C3]  # G3 was only an overtone
+    assert added == 1 and dropped == 2
+    assert sorted(n.pitch for n in notes) == [C2]
+
+
+def test_a_power_chords_octave_survives_because_its_fifth_is_there():
+    y = guitar([C2, G2, C3], highpass=90)
+    notes, _, _ = collapse_to_roots(
+        [note(0, 0.4, G2), note(0, 0.4, C3)], y, SR, lowest=C2, floor_hz=89
+    )
+    assert sorted(n.pitch for n in notes) == [C2, G2, C3]
 
 
 def test_a_lead_note_high_on_the_neck_grows_no_bass_note_underneath():

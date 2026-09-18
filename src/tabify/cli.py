@@ -119,6 +119,13 @@ def build_parser() -> argparse.ArgumentParser:
     )
     g.add_argument("--seek-seconds", type=float, default=5.0, help="seconds to jump with arrow keys in --play (default: 5)")
 
+    g = p.add_argument_group("checking")
+    g.add_argument(
+        "--compare", metavar="TABFILE",
+        help="compare the transcription against a tab you already have (ASCII tab), and report "
+        "what each side has that the other doesn't",
+    )
+
     g = p.add_argument_group("display")
     g.add_argument("--title", help="title shown above the tab")
     g.add_argument("--width", type=int, help="max line width (default: terminal width)")
@@ -264,6 +271,9 @@ def _process_one(
         )
         _info(f"Wrote audio to {out}")
 
+    if args.compare:
+        _compare_with_tab(fretted, tuning, args)
+
 
 def _play_one(
     notes: list[Note], bpm: float, time_sig: TimeSignature, title: str, tuning,
@@ -335,6 +345,49 @@ def _is_full_mix(path: Path, tuning, args: argparse.Namespace) -> bool:
         "         (--no-auto-separate silences this and tabs the mix as-is.)"
     )
     return False
+
+
+def _pitches_of(strokes, tuning, capo: int = 0) -> list[set[int]]:
+    """Each stroke as the set of pitches it sounds, so two tabs can be compared by ear, not by fret."""
+    return [{tuning.strings[s] + capo + f for s, f in stroke} for stroke in strokes]
+
+
+def _compare_with_tab(fretted, tuning, args: argparse.Namespace) -> None:
+    """Say how a transcription differs from a tab someone already has."""
+    from tabify.align import agreement, align
+    from tabify.tabfile import read_tab_file
+
+    written = read_tab_file(args.compare)
+    reference_tuning = written.tuning or tuning
+    if reference_tuning.strings != tuning.strings:
+        _info(
+            f"note: that tab is in {reference_tuning.describe()} and this was transcribed in "
+            f"{tuning.describe()} - comparing the notes each one sounds, not the fret numbers."
+        )
+    reference = _pitches_of(written.strokes, reference_tuning)
+    heard = _pitches_of([[(p.string, p.fret) for p in e.positions] for e in fretted.events], tuning, args.capo)
+
+    result = align(reference, heard)
+    summary = agreement(reference, heard, result)
+    print(
+        f"\nAgainst {Path(args.compare).name}: {summary['strokes_a']} strokes written, "
+        f"{summary['strokes_b']} heard\n"
+        f"  {summary['exact']} matched exactly ({summary['recall']:.0%} of the written tab)\n"
+        f"  {summary['partial']} nearly (a chord missing or gaining a string)\n"
+        f"  {summary['missed']} written but not heard, {summary['extra']} heard but not written"
+    )
+
+    from tabify.notes import midi_to_name
+
+    disagreements = [(i, j) for i, j in result.pairs if reference[i] != heard[j]]
+    if disagreements:
+        print("  where they differ:")
+        for i, j in disagreements[:8]:
+            want = " ".join(midi_to_name(p) for p in sorted(reference[i]))
+            got = " ".join(midi_to_name(p) for p in sorted(heard[j]))
+            print(f"    stroke {i + 1:>4}: tab says {want:<20} tabify heard {got}")
+        if len(disagreements) > 8:
+            print(f"    ... and {len(disagreements) - 8} more")
 
 
 def _separate_and_process(path: Path, title: str, tuning, time_sig, args: argparse.Namespace) -> None:

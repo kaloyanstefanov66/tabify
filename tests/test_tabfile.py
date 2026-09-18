@@ -119,3 +119,33 @@ D|-0-3---|
 def test_text_with_no_tab_in_it_says_so():
     with pytest.raises(TabifyError, match="no tab found"):
         parse_tab("just some notes about a song, no tab here")
+
+
+def test_tabifys_own_tabs_can_be_read_back():
+    """A tab tabify wrote has to be a tab tabify can read.
+
+    Its header says "C2 G2 C3 F3 A3 D4 (drop-c)", and feeding that whole string to the tuning
+    parser used to fail on the brackets - found by comparing a transcription against a tab
+    tabify itself had produced.
+    """
+    from tabify.fretting import Position, TabEvent
+    from tabify.notes import Note
+    from tabify.render import render_tab
+    from tabify.tuning import parse_tuning
+
+    tuning = parse_tuning("drop-c")
+    positions = [[(0, 0), (1, 0), (2, 0)], [(0, 0)], [(0, 3), (1, 3), (2, 3)]]
+    events = [
+        TabEvent(i * 0.5, [Note(i * 0.5, 0.5, tuning.strings[s] + f) for s, f in stroke],
+                 [Position(s, f) for s, f in stroke])
+        for i, stroke in enumerate(positions)
+    ]
+    written = render_tab(events, tuning, subdivision=4, width=200)
+    read_back = parse_tab(written)
+    assert read_back.tuning.strings == tuning.strings
+    assert read_back.strokes == [sorted(stroke) for stroke in positions]
+
+
+def test_an_unreadable_tuning_header_is_ignored_rather_than_fatal():
+    tab = parse_tab("tuning: whatever I had it in that day\n" + SIMPLE)
+    assert tab.tuning.describe() == "E2 A2 D3 G3 B3 E4"  # fell back to the string labels

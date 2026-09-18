@@ -90,7 +90,7 @@ def parse_tab(text: str, *, tuning: Tuning | None = None, column_tolerance: int 
         if found:
             metadata[found.group(1).lower()] = found.group(2)
     if tuning is None and "tuning" in metadata:
-        tuning = parse_tuning(metadata["tuning"])
+        tuning = _tuning_from_header(metadata["tuning"])
 
     blocks = _blocks(lines)
     if not blocks:
@@ -111,6 +111,25 @@ def parse_tab(text: str, *, tuning: Tuning | None = None, column_tolerance: int 
             strokes.append(sorted(columns[column]))
 
     return TabStrokes(strokes, tuning, metadata)
+
+
+def _tuning_from_header(value: str) -> Tuning | None:
+    """Read a tuning out of a header line, however it was written.
+
+    People write "drop C", "C2 G2 C3 F3 A3 D4", or both at once - tabify's own tabs say
+    "C2 G2 C3 F3 A3 D4 (drop-c)", which it could not read back until this handled the
+    brackets. An unreadable line is ignored rather than fatal; the string labels below it
+    usually say the same thing anyway.
+    """
+    inside = re.findall(r"\((.*?)\)", value)
+    for candidate in (re.sub(r"\(.*?\)", "", value).strip(), *inside, value.strip()):
+        if not candidate:
+            continue
+        try:
+            return parse_tuning(candidate)
+        except TabifyError:
+            continue
+    return None
 
 
 def _tuning_from_labels(rows: list[str]) -> Tuning | None:

@@ -334,8 +334,16 @@ def collapse_to_roots(
         if scored:
             root = max(scored)[1]
             added.append(TimedNote(start, end, root, max(n.velocity for n in group)))
+        # An octave with a fifth under it is a power chord's top string; an octave with no fifth
+        # is far more likely the root's own 2nd harmonic - which is how a lone chug kept coming
+        # back as two notes. Physically the two are indistinguishable (an octave string and a
+        # 2nd harmonic land on the same frequencies), so this is a bet, and the benchmark says
+        # it's the right one: mean note F1 82% -> 89%. It costs a few real octaves on held power
+        # chords whose fifth the model missed, which is the trade being made.
+        has_fifth = any(p - root == 7 for p in pitches)
         for n in group:
-            if n.pitch - root in _OVERTONE_ONLY:
+            interval = n.pitch - root
+            if interval in _OVERTONE_ONLY or (interval == 12 and not has_fifth):
                 drop.add(id(n))
 
     kept = [n for n in notes if id(n) not in drop]

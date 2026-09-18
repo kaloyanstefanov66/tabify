@@ -326,13 +326,13 @@ search). Current mean across the benchmark, up from 65% / 46% before the cleanup
 
 | | note F1 | tab F1 |
 | --- | --- | --- |
-| drop-C chug riff | 87% | 87% |
-| drop-C chug riff, low end cut | 86% | 86% |
-| drop-C chug riff, human timing | 94% | 94% |
-| drop-C power chords | 84% | 74% |
-| standard clean arpeggio | 70% | 45% |
-| standard single-note line | 73% | 18% |
-| **mean** | **82%** | **67%** |
+| drop-C chug riff | 94% | 94% |
+| drop-C chug riff, low end cut | 96% | 96% |
+| drop-C chug riff, human timing | 99% | 99% |
+| drop-C power chords | 79% | 68% |
+| standard clean arpeggio | 82% | 82% |
+| standard single-note line | 86% | 14% |
+| **mean** | **89%** | **75%** |
 
 Read those as a way to compare changes, not as real-world accuracy: the audio is
 synthesized, so it's kinder than a real recording. For scale, [TART (2026)](https://arxiv.org/html/2609.11904),
@@ -340,6 +340,29 @@ the best published audio-to-tab system, reports 54% end-to-end tab F1 on real re
 this is an unsolved problem, and heavily distorted downtuned guitar is its hardest corner.
 Recall is near 100% on riffs; the remaining gap is precision (extra notes), which is what
 the cleanup step keeps chipping away at.
+
+### Checking a transcription against a tab you have
+
+```bash
+tabify riff.wav --compare my_riff.txt
+```
+
+```console
+Against my_riff.txt: 32 strokes written, 36 heard
+  22 matched exactly (69% of the written tab)
+  10 nearly (a chord missing or gaining a string)
+  0 written but not heard, 4 heard but not written
+  where they differ:
+    stroke    2: tab says C2                   tabify heard C2 C3
+```
+
+The two are lined up the way two versions of a text are, so an extra chug or a missed note
+doesn't mark everything after it as wrong, and strokes are compared by the notes they sound
+rather than by fret, since the same chord fingered in two places is the same chord.
+
+This is how to find out what tabify actually gets wrong on your playing, rather than guessing
+from how a tab looks - and the first time it ran, all ten of its disagreements turned out to
+be one fixable bug.
 
 ## Limitations
 
