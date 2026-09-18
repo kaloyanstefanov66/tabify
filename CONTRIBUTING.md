@@ -27,6 +27,8 @@ pytest
 | `src/tabify/rhythm.py` | Quantization, time signatures, bar alignment |
 | `src/tabify/fretting.py` | Picking a string/fret for each note (the Viterbi search) |
 | `src/tabify/render.py` | ASCII tab output |
+| `src/tabify/tabfile.py` | Reading ASCII tab that people wrote by hand |
+| `src/tabify/mixcheck.py` | Telling one instrument from a whole band mix |
 
 ## Good first contributions
 
