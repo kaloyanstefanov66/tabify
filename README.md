@@ -154,7 +154,7 @@ tabify song.mid --play                          # MIDI has no "original recordin
 | `--onset-threshold` | Note sensitivity for basic-pitch (lower finds more notes) |
 | `--min-note-ms` | Ignore notes shorter than this, to filter out noise |
 | `--no-cleanup` | Skip snapping to pick attacks, splitting merged chugs and restoring missing low roots (see [the cleanup step](#the-cleanup-step)) |
-| `--no-palm-mute` | Don't mark palm mutes (they're inferred from rhythm and string, not heard) |
+| `--palm-mute` | Guess palm mutes from fast repeated low-string hits. Off by default - see [limitations](#limitations) |
 | `--tuning auto` | Work the tuning out from the audio, and say how confident it is (see [detecting the tuning](#detecting-the-tuning)). This is the default for audio, so you rarely need to type it |
 | `--midi-out FILE` | Save the transcribed notes as a MIDI file |
 | `--musicxml-out FILE` | Save as MusicXML (string/fret included), for Guitar Pro, TuxGuitar or MuseScore |
@@ -399,7 +399,7 @@ Automatic music transcription is still an open research problem, so here's what 
 
 - **Works best on:** a clean recording of one guitar, such as a DI or close-mic recording, a riff, or a solo. With `--engine basic-pitch` (the default when it's installed), chords, power chords and dyads (thirds, fourths, fifths, octaves) transcribe correctly - verified against a set of synthesized power chords and intervals, all detected with the right notes.
 - **Harder:** full band mixes, heavy distortion, and dense strumming. The notes will be rough.
-- **Palm mutes are inferred, not heard.** On distorted guitar, muted and let-ring strokes measured the same decay and brightness - the distortion compresses both - so tabify marks `PM` on fast (8th note or quicker) repeated hits on the two lowest strings, the way they're played in practice. Expect it to be right for chug riffs and wrong on anything unconventional; `--no-palm-mute` turns it off.
+- **Palm mutes are not detected, and guessing them is off by default.** Muted and ringing strokes look the same to tabify: measured on a real riff against its tab, the sustain of muted and ringing strokes overlapped almost completely (medians 0.93 against 1.00, with the quartile ranges on top of each other), because distortion compresses the decay and the next stroke arrives before the last has died. The old guess - `PM` on fast repeated low-string hits - marked 76% of that riff as muted where the tab said 6%, a precision of 3%. Since a wrong `PM` changes how you would play the part, it now stays quiet rather than guess. `--palm-mute` turns the guess back on if your riff really is wall-to-wall chugging.
 - It doesn't detect bends, slides or hammer-ons yet.
 - Beat tracking finds the beats but can't be sure where bar 1 starts. Use `--bpm` if the tempo is off.
 

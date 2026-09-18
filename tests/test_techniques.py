@@ -22,3 +22,18 @@ def test_a_single_quick_note_is_not_a_palm_mute_run():
 def test_fast_runs_on_high_strings_are_left_alone():
     marked = infer_palm_mutes([stroke(t * 0.25, (4, 5)) for t in range(6)])
     assert not any(e.palm_mute for e in marked)
+
+
+def test_palm_mutes_are_not_guessed_unless_asked_for(tmp_path, capsys):
+    """Measured against a real tab, the guess marked 76% of strokes where 6% were muted."""
+    from tabify.cli import build_parser
+
+    args = build_parser().parse_args(["riff.wav"])
+    assert args.palm_mute is False
+
+
+def test_the_old_off_switch_still_works(tmp_path):
+    from tabify.cli import build_parser
+
+    args = build_parser().parse_args(["riff.wav", "--no-palm-mute"])
+    assert args.no_palm_mute is True and args.palm_mute is False

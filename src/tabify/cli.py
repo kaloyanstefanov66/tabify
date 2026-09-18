@@ -84,9 +84,12 @@ def build_parser() -> argparse.ArgumentParser:
         help="skip snapping notes to pick attacks, splitting merged re-strikes and restoring missing low roots",
     )
     g.add_argument(
-        "--no-palm-mute", action="store_true",
-        help="don't mark palm mutes (they're inferred from fast repeated low-string hits, not heard)",
+        "--palm-mute", action="store_true",
+        help="guess palm mutes from fast repeated low-string hits. Off by default: they are "
+        "inferred rather than heard, and on real riffing the guess is wrong far more often "
+        "than it is right",
     )
+    g.add_argument("--no-palm-mute", action="store_true", help=argparse.SUPPRESS)  # now the default
 
     g = p.add_argument_group("midi")
     g.add_argument("--track", type=int, help="only use this MIDI track index (default: all non-drum tracks)")
@@ -252,7 +255,7 @@ def _quantize_and_fret(
     if fretted.dropped:
         _info(f"warning: skipped {len(fretted.dropped)} note(s) that don't fit this tuning/capo")
     # Only for audio: a MIDI file's notes carry no technique information to base a guess on.
-    if from_audio and not args.no_palm_mute:
+    if from_audio and args.palm_mute and not args.no_palm_mute:
         from tabify.techniques import infer_palm_mutes
 
         fretted.events = infer_palm_mutes(fretted.events)
