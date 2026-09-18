@@ -13,7 +13,7 @@ from tabify.fretting import FretOptions, assign_frets
 from tabify.instruments import ALL_PROGRAMS, default_instrument
 from tabify.notes import Note
 from tabify.render import render_tab
-from tabify.rhythm import TimeSignature, align_to_bars, parse_time_signature, quantize, start_on_first_beat
+from tabify.rhythm import leading_bar_shift, TimeSignature, align_to_bars, parse_time_signature, quantize, start_on_first_beat
 from tabify.tuning import TUNINGS, parse_tuning
 
 MIDI_EXTENSIONS = {".mid", ".midi"}
@@ -243,7 +243,10 @@ def _transcribe_path(path: Path, tuning, args: argparse.Namespace) -> tuple[list
 def _quantize_and_fret(
     notes: list[Note], time_sig: TimeSignature, tuning, args: argparse.Namespace, from_audio: bool,
 ):
-    notes = align_to_bars(quantize(notes, args.grid), time_sig)
+    notes = quantize(notes, args.grid)
+    # How far the tab's bar 1 sits into the recording, kept so playback can line up with it.
+    trimmed_beats = leading_bar_shift(notes, time_sig)
+    notes = align_to_bars(notes, time_sig)
     opts = FretOptions(capo=args.capo, max_fret=args.max_fret, max_span=args.max_span)
     fretted = assign_frets(notes, tuning, opts)
     if fretted.dropped:
@@ -253,7 +256,7 @@ def _quantize_and_fret(
         from tabify.techniques import infer_palm_mutes
 
         fretted.events = infer_palm_mutes(fretted.events)
-    return notes, fretted
+    return notes, fretted, trimmed_beats
 
 
 def _process_one(
@@ -261,7 +264,7 @@ def _process_one(
     args: argparse.Namespace, label: str | None, from_audio: bool = False,
 ) -> None:
     """Quantize, fret, render and export one instrument's notes."""
-    notes, fretted = _quantize_and_fret(notes, time_sig, tuning, args, from_audio)
+    notes, fretted, _ = _quantize_and_fret(notes, time_sig, tuning, args, from_audio)
 
     width = args.width or shutil.get_terminal_size((100, 24)).columns
     text = render_tab(
@@ -319,7 +322,7 @@ def _play_one(
 ) -> None:
     from tabify.player import load_audio_file, play_along
 
-    notes, fretted = _quantize_and_fret(notes, time_sig, tuning, args, from_audio=audio_path is not None)
+    notes, fretted, trimmed_beats = _quantize_and_fret(notes, time_sig, tuning, args, from_audio=audio_path is not None)
     bpm = bpm or 120.0
 
     source = args.source or ("original" if audio_path else "synth")
@@ -340,11 +343,20 @@ def _play_one(
         )
         sample_rate = 44100
 
+    # Bar 1 of the tab is not second 0 of the recording: a take that opens with silence or a
+    # count-in has its empty bars trimmed off the tab, and playing the original back without
+    # putting that time back runs the tab ahead of the audio by exactly that much. Playing a
+    # synthesized version has no lead-in to restore, because it was rendered from the tab.
+    lead_in = trimmed_beats * 60.0 / bpm if source == "original" else 0.0
+    if lead_in:
+        _info(f"The tab starts {lead_in:.1f}s into the recording; playback follows the audio.")
+
     width = args.width or shutil.get_terminal_size((100, 24)).columns
     play_along(
         fretted.events, tuning, audio, sample_rate,
         bpm=bpm, time_sig=time_sig, subdivision=args.grid, capo=args.capo,
         title=title, width=max(width, 20), color=_use_color(args), seek_seconds=args.seek_seconds,
+        lead_in=lead_in,
     )
 
 

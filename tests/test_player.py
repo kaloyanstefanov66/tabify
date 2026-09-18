@@ -96,3 +96,31 @@ def test_play_along_uses_the_alternate_screen_and_restores_the_terminal(monkeypa
     out = capsys.readouterr().out
     assert out.index(term.ALT_SCREEN_ON) < out.index(term.HOME)
     assert out.rstrip().endswith(term.ALT_SCREEN_OFF)
+
+
+def test_a_take_that_starts_late_keeps_its_lead_in():
+    """align_to_bars trims the empty bars off the tab; playback has to put that time back."""
+    from tabify.notes import Note
+    from tabify.rhythm import TimeSignature, leading_bar_shift
+
+    # First note two bars in, at 4/4.
+    notes = [Note(8.0, 1, 40), Note(9.0, 1, 43)]
+    assert leading_bar_shift(notes, TimeSignature()) == 8.0
+    # At 120 BPM those 8 beats are 4 seconds of recording before the tab's bar 1.
+    assert 8.0 * 60.0 / 120.0 == 4.0
+
+
+def test_no_lead_in_when_the_first_note_is_already_in_bar_one():
+    from tabify.notes import Note
+    from tabify.rhythm import TimeSignature, leading_bar_shift
+
+    assert leading_bar_shift([Note(0.5, 1, 40)], TimeSignature()) == 0.0
+    assert leading_bar_shift([], TimeSignature()) == 0.0
+
+
+def test_the_cursor_waits_at_the_start_during_the_lead_in():
+    from tabify.player import step_at
+
+    # During the lead-in the offset time is negative and must not run the tab backwards.
+    assert step_at(max(0.0, 1.0 - 4.0), 120, 4) == 0.0
+    assert step_at(max(0.0, 5.0 - 4.0), 120, 4) == 8.0

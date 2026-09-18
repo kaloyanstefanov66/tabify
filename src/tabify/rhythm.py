@@ -52,10 +52,22 @@ def start_on_first_beat(notes: list[Note]) -> list[Note]:
     return [replace(n, start=n.start - shift) for n in notes]
 
 
+def leading_bar_shift(notes: list[Note], time_sig: TimeSignature) -> float:
+    """How many beats of empty bars sit before the first note.
+
+    Worth keeping rather than discarding: it is the distance between the tab's first bar and
+    the start of the recording, which is exactly what playback needs to stay lined up when a
+    take begins with a few seconds of silence or a count-in.
+    """
+    if not notes:
+        return 0.0
+    first = min(n.start for n in notes)
+    return math.floor(first / time_sig.bar_length + 1e-9) * time_sig.bar_length
+
+
 def align_to_bars(notes: list[Note], time_sig: TimeSignature) -> list[Note]:
     """Drop leading empty bars so the first note lands in bar 1, keeping its position in the bar."""
     if not notes:
         return notes
-    first = min(n.start for n in notes)
-    shift = math.floor(first / time_sig.bar_length + 1e-9) * time_sig.bar_length
+    shift = leading_bar_shift(notes, time_sig)
     return [replace(n, start=n.start - shift) for n in notes]

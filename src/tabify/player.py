@@ -124,6 +124,7 @@ def play_along(
     width: int = 80,
     color: bool = False,
     seek_seconds: float = 5.0,
+    lead_in: float = 0.0,
 ) -> None:
     if importlib.util.find_spec("sounddevice") is None:
         raise TabifyError(PLAY_HELP)
@@ -183,7 +184,9 @@ def play_along(
                     f"[{'playing' if playing else 'paused '}] {mm:02d}:{ss:02d} / {tmm:02d}:{tss:02d}   "
                     f"space=pause/resume  <-/->=seek {seek_seconds:g}s  q=quit"
                 )
-                _draw(layout, header, step_at(now, bpm, subdivision), color, status)
+                # Before the first bar the cursor waits at the start rather than running
+                # backwards off the tab.
+                _draw(layout, header, step_at(max(0.0, now - lead_in), bpm, subdivision), color, status)
 
                 key = keys.read()
                 if key in ("q", "Q", "\x03", "ESC"):
