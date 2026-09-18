@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import re
+from collections import Counter
 from dataclasses import dataclass
 
 from tabify import TabifyError
@@ -118,14 +119,30 @@ def score_tuning(tuning: Tuning, pitches: list[int], *, max_fret: int = 22) -> f
     """
     if not pitches:
         return 0.0
+
     lowest, highest = tuning.strings[0], tuning.strings[-1] + max_fret
     playable = [p for p in pitches if lowest <= p <= highest]
     if not playable:
         return 0.0
-    unplayable_share = 1 - len(playable) / len(pitches)
+    # A note heard once is a misdetection; a note heard again and again is the instrument.
+    # Judging unplayable notes by that, rather than by how many there are, is what keeps a
+    # handful of low ghosts from ruling out the right tuning - while a bass line's low E,
+    # which recurs constantly, still rules out every guitar tuning above it.
+    counts = Counter(pitches)
+    unplayable = [p for p in pitches if not lowest <= p <= highest]
+    recurring = sum(1 for p in unplayable if counts[p] >= 3)
+    unplayable_share = (recurring + 0.2 * (len(unplayable) - recurring)) / len(pitches)
     open_share = sum(p in tuning.strings for p in playable) / len(playable)
     low_string_share = sum(p == lowest for p in playable) / len(playable)
-    starts_on_low_string = min(pitches) == lowest
+    # Where the playing bottoms out: the lowest note heard repeatedly, rather than the single
+    # lowest note (most likely a ghost) or a percentile (which sits above the lowest string
+    # whenever someone favours their second string, as bass lines do).
+    recurring_pitches = [p for p, seen in counts.items() if seen >= 3]
+    floor_pitch = min(recurring_pitches) if recurring_pitches else min(pitches)
+    starts_on_low_string = abs(floor_pitch - lowest) < 1.0
+    # Nobody tunes to a string they never touch. Without this, a 7-string tuning wins on any
+    # 6-string song, since it can play everything standard can plus a low string it never uses.
+    unused_low_string = not any(lowest <= p < lowest + 5 for p in playable)
     # Lowest fret each note could be played at, as a fraction of the neck.
     mean_fret = sum(min(p - s for s in tuning.strings if s <= p) for p in playable) / len(playable) / max_fret
 
@@ -138,6 +155,7 @@ def score_tuning(tuning: Tuning, pitches: list[int], *, max_fret: int = 22) -> f
         + 0.6 * open_share
         + 0.8 * low_string_share  # leaning on the open low string is the signature of a drop tuning
         + (0.8 if starts_on_low_string else 0.0)
+        - (0.7 if unused_low_string else 0.0)
         - 0.5 * mean_fret,
     )
 

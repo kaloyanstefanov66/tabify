@@ -48,3 +48,30 @@ def test_every_preset_can_be_scored_without_blowing_up():
 
 def test_no_notes_scores_zero_rather_than_guessing():
     assert score_tuning(parse_tuning("standard"), []) == 0.0
+
+
+def test_a_few_low_ghost_notes_do_not_flip_the_tuning():
+    """Spurious low notes are what the pitch model produces, not evidence of a lower tuning.
+
+    Reported from a real take: an E-standard song came back as 7-string, because a handful of
+    ghost notes below the low E made standard look unplayable while a 7-string absorbed them.
+    """
+    song = played("standard", [(0, 0), (1, 2), (2, 2), (3, 0), (4, 0), (5, 0)] * 4 + [(1, 3), (2, 0), (4, 3)] * 3)
+    for ghosts in ([35, 34, 33], [35, 34, 33, 31, 36, 30, 38, 32]):
+        assert rank_tunings(song + ghosts)[0][1].name == "standard"
+
+
+def test_extended_range_needs_its_low_string_to_actually_be_played():
+    # A 7-string can play everything standard can, plus a low string. Picking it should take
+    # evidence that the low string is used, not just that it exists.
+    song = played("standard", [(0, 0), (1, 2), (2, 2), (3, 0), (4, 0), (5, 0)] * 4)
+    assert rank_tunings(song)[0][1].name == "standard"
+    seven = played("7-string", [(0, 0), (1, 0), (2, 0)] * 6 + [(0, 0)] * 8)
+    assert rank_tunings(seven)[0][1].name == "7-string"
+
+
+def test_a_recurring_low_note_does_rule_out_higher_tunings():
+    # The flip side: a bass line's low E comes back constantly, and that has to keep ruling
+    # out every guitar tuning above it - forgiving it as noise made this a guitar.
+    riff = played("bass", [(0, 0), (1, 0)] * 4 + [(0, 3), (1, 3)] * 3 + [(0, 5)] * 4)
+    assert rank_tunings(riff)[0][1].name == "bass"
