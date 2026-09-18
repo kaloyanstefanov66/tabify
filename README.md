@@ -34,25 +34,48 @@ tabify lists every way to finger each note and chord and gives each one a cost f
 
 ## Install
 
+Most people want one command:
+
 ```bash
-pipx install "tabify-cli[audio]"
+pipx install "tabify-cli[audio,ml]" --python 3.10
 ```
 
-| Install | Gives you | Python |
+That gives you audio in, tabs out, chords and all - and pulls **no native dependencies**:
+no compiler, no ffmpeg, no separate installers. Roughly 150 MB, most of it numpy and scipy.
+
+| Install | Gives you | Extra setup |
 | --- | --- | --- |
-| `tabify-cli` | MIDI → tab, all the tab features | 3.10+ |
-| `tabify-cli[audio]` | + audio transcription of **single-note** lines (librosa pYIN) | 3.10+ |
-| `tabify-cli[ml]` | + **chords, power chords and other intervals** via Spotify's [basic-pitch](https://github.com/spotify/basic-pitch) | 3.10–3.11 |
-| `tabify-cli[separate]` | + **full-mix support**: split a band recording into stems (guitar/bass/drums/vocals/piano) before tabbing, via [Demucs](https://github.com/facebookresearch/demucs) | 3.10+ |
-| `tabify-cli[render]` | + **real audio rendering** of a transcription (acoustic/distorted guitar, bass, ...) via FluidSynth | 3.10+ |
-| `tabify-cli[youtube]` | + transcribe straight from a **YouTube (or other site) link**, via [yt-dlp](https://github.com/yt-dlp/yt-dlp) (needs ffmpeg) | 3.10+ |
+| `tabify-cli` | MIDI → tab, every tab feature | none |
+| `tabify-cli[audio]` | + transcribing **single-note** lines from audio | none |
+| `tabify-cli[ml]` | + **chords and power chords** (Spotify's [basic-pitch](https://github.com/spotify/basic-pitch)) | none on Python 3.10 |
+| `tabify-cli[youtube]` | + transcribe straight from a **link** | needs [ffmpeg](https://ffmpeg.org/download.html) |
+| `tabify-cli[render]` | + **render audio** of a transcription, and `--play` with a synth tone | needs [FluidSynth](https://github.com/FluidSynth/fluidsynth/releases) |
+| `tabify-cli[play]` | + **play along** with the original recording | none |
+| `tabify-cli[separate]` | + **full-mix** separation into stems | pulls PyTorch (~550 MB) |
+| `tabify-cli[all]` | everything above except `separate` | ffmpeg and FluidSynth if you want those parts |
 
-```bash
-# chord/power-chord engine (basic-pitch currently needs Python 3.11 or older)
-pipx install "tabify-cli[ml]" --python 3.11
-```
+### Why Python 3.10 for chords
 
-`[ml]` pulls in TensorFlow, which is a genuinely large download (~1.2 GB) - basic-pitch's model needs it on Windows/Linux for Python 3.11+. Worth knowing before you install it, not after.
+basic-pitch can run from a 0.2 MB ONNX model or from TensorFlow, and both give **identical
+predictions** (checked note for note). On Python 3.10 it installs the ONNX runtime and skips
+TensorFlow entirely; on 3.11 it insists on TensorFlow, which is a 1.2 GB download and about
+ten seconds of startup. tabify uses the ONNX model either way, so on 3.11 you pay for
+TensorFlow without using it.
+
+`pipx` will fetch Python 3.10 for you if you don't have it. Chords still work on 3.11 - it
+just costs a gigabyte you didn't need.
+
+### What genuinely needs a separate install
+
+Only two things, both optional:
+
+- **ffmpeg**, to convert what gets downloaded from a link (`winget install Gyan.FFmpeg`).
+- **FluidSynth**, to synthesize audio from a transcription. On macOS and Linux that's
+  `brew install fluid-synth` / `apt install fluidsynth`; on Windows it's a zip from
+  [their releases](https://github.com/FluidSynth/fluidsynth/releases) with its `bin\`
+  folder added to PATH, which is the most tedious step in the whole project.
+
+Everything else is one `pipx install`.
 
 Try it without any audio:
 

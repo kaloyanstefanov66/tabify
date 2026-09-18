@@ -62,11 +62,28 @@ def _midi_to_hz(pitch: float) -> float:
     return 440.0 * 2 ** ((pitch - 69) / 12)
 
 
+def _onnx_model_path():
+    """The ONNX copy of basic-pitch's model, if it can be used.
+
+    Same model, same predictions (checked note for note), but it loads in a tenth of a second
+    from a 0.2 MB file instead of pulling in TensorFlow - which is a 1.2 GB install and about
+    ten seconds of startup. Worth preferring whenever onnxruntime is around.
+    """
+    if importlib.util.find_spec("onnxruntime") is None:
+        return None
+    import basic_pitch
+
+    path = Path(basic_pitch.__file__).parent / "saved_models" / "icassp_2022" / "nmp.onnx"
+    return path if path.exists() else None
+
+
 def _basic_pitch(path: Path, lo: int, hi: int, onset_threshold: float, min_note_ms: float) -> list[_TimedNote]:
     from basic_pitch.inference import predict
 
+    model = _onnx_model_path()
     _, _, events = predict(
         str(path),
+        **({"model_or_model_path": model} if model else {}),
         onset_threshold=onset_threshold,
         minimum_note_length=min_note_ms,
         minimum_frequency=_midi_to_hz(lo - 0.5),
