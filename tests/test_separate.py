@@ -1,7 +1,7 @@
 import pytest
 
 from tabify import TabifyError
-from tabify.separate import SEPARATE_HELP, separate_stems, separation_available
+from tabify.separate import SELECTABLE, SEPARATE_HELP, parse_stems, separate_stems, separation_available
 
 
 def _installed(*names):
@@ -38,3 +38,33 @@ def test_the_onnx_backend_is_preferred_over_pytorch(tmp_path, monkeypatch):
     monkeypatch.setattr("tabify.separate._separate_torch", lambda path, out: used.append("torch") or {})
     separate_stems("song.wav", tmp_path)
     assert used == ["onnx"]
+
+
+def test_stem_choice_accepts_a_list_or_all():
+    assert parse_stems("guitar") == ["guitar"]
+    assert parse_stems(" Guitar , Bass ") == ["guitar", "bass"]
+    assert parse_stems("all") == list(SELECTABLE)
+
+
+def test_drums_are_not_on_offer():
+    # There's nothing to fret on a drum kit, so it isn't one of the choices.
+    assert "drums" not in SELECTABLE
+    with pytest.raises(TabifyError, match="nothing to fret"):
+        parse_stems("drums")
+
+
+def test_an_unknown_part_lists_the_real_ones():
+    with pytest.raises(TabifyError, match="guitar"):
+        parse_stems("banjo")
+
+
+def test_loudness_tells_an_empty_stem_from_a_played_one(tmp_path):
+    import numpy as np
+    import soundfile as sf
+
+    from tabify.separate import SILENCE_RMS, loudness
+
+    quiet, played = tmp_path / "piano.wav", tmp_path / "guitar.wav"
+    sf.write(str(quiet), np.full(22050, 1e-4, dtype="float32"), 22050)
+    sf.write(str(played), np.sin(np.linspace(0, 400, 22050)).astype("float32"), 22050)
+    assert loudness(quiet) < SILENCE_RMS <= loudness(played)

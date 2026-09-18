@@ -22,8 +22,13 @@ import numpy as np
 from tabify import TabifyError
 
 MODEL = "htdemucs_6s"
-# Stems worth running guitar/bass transcription on; drums and vocals are skipped.
-TRANSCRIBABLE = ("guitar", "bass")
+# Stems that can be tabbed at all, in the order most people want them. Drums are left out:
+# there's nothing to fret. "other" is where second guitars and keys usually end up.
+SELECTABLE = ("guitar", "bass", "other", "piano", "vocals")
+DEFAULT_STEMS = ("guitar",)
+# Stems the model found nothing for come back near-silent (measured around 0.0002 on a real
+# mix with no piano in it), and tabbing silence just wastes a minute.
+SILENCE_RMS = 0.002
 
 SEPARATE_HELP = (
     'full-mix separation needs a separation model:\n  pip install "tabify-cli[separate]"\n'
@@ -64,6 +69,28 @@ def _separate_torch(path: Path, out_dir: Path) -> dict[str, Path]:
         save_audio(tensor, str(out_path), samplerate=separator.samplerate)
         paths[name] = out_path
     return paths
+
+
+def parse_stems(spec: str) -> list[str]:
+    """Which stems to tab, from a comma-separated list or "all"."""
+    if spec.strip().lower() == "all":
+        return list(SELECTABLE)
+    wanted = [name.strip().lower() for name in spec.split(",") if name.strip()]
+    unknown = [name for name in wanted if name not in SELECTABLE]
+    if unknown:
+        raise TabifyError(
+            f"can't tab {', '.join(unknown)} - choose from {', '.join(SELECTABLE)}, or 'all'"
+            + (" (drums have nothing to fret)" if "drums" in unknown else "")
+        )
+    return wanted or list(DEFAULT_STEMS)
+
+
+def loudness(path: Path) -> float:
+    """RMS level of a stem, for telling an empty one from a real part."""
+    import soundfile as sf
+
+    audio, _ = sf.read(str(path), dtype="float32", always_2d=True)
+    return float(np.sqrt((audio**2).mean())) if len(audio) else 0.0
 
 
 def separation_available() -> bool:

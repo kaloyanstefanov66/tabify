@@ -50,6 +50,11 @@ def build_parser() -> argparse.ArgumentParser:
         "--separate", action="store_true",
         help="split a full-band recording into instrument stems first (via Demucs) and tab each one separately",
     )
+    g.add_argument(
+        "--stems", default="guitar", metavar="NAMES",
+        help="which separated parts to tab: any of guitar, bass, other, piano, vocals (comma-separated), "
+        "or 'all' (default: guitar). 'other' is usually second guitars and keys",
+    )
     g.add_argument("--bass-tuning", default="bass", help="tuning used for the separated bass stem (default: bass)")
     g.add_argument(
         "--no-auto-separate", action="store_true",
@@ -335,21 +340,37 @@ def _is_full_mix(path: Path, tuning, args: argparse.Namespace) -> bool:
 def _separate_and_process(path: Path, title: str, tuning, time_sig, args: argparse.Namespace) -> None:
     import tempfile
 
-    from tabify.separate import TRANSCRIBABLE, separate_stems
+    from tabify.separate import SELECTABLE, SILENCE_RMS, loudness, parse_stems, separate_stems
 
+    wanted = parse_stems(args.stems)
     _info(f"Separating {path.name} into stems (this downloads a model on first use) ...")
     with tempfile.TemporaryDirectory(prefix="tabify-") as tmp:
         stems = separate_stems(path, tmp)
-        found = [name for name in TRANSCRIBABLE if name in stems]
+        levels = {name: loudness(p) for name, p in stems.items() if name in SELECTABLE}
+        playing = [name for name, level in levels.items() if level >= SILENCE_RMS]
+        found = [name for name in wanted if name in playing]
+
+        empty = [name for name in wanted if name in levels and name not in playing]
+        if empty:
+            _info(f"Nothing playing in the {', '.join(empty)} stem, so there's nothing to tab there.")
         if not found:
-            raise TabifyError(f"none of {TRANSCRIBABLE} were found in the separated stems: {sorted(stems)}")
+            raise TabifyError(
+                f"nothing to tab in {', '.join(wanted)}. This track has: {', '.join(playing) or 'nothing'}"
+            )
+        others = [name for name in playing if name not in found]
+        if others:
+            _info(f"Also in this track: {', '.join(others)} - tab those with --stems {','.join(others)}")
+
         for name in found:
             stem_tuning = parse_tuning(args.bass_tuning) if name == "bass" else tuning
             _info(f"Transcribing {name} stem ...")
             notes, bpm, engine, stem_tuning = _transcribe_path(stems[name], stem_tuning, args)
             ts = time_sig or TimeSignature()
             _info(f"  Engine: {engine}, {len(notes)} notes, ~{round(bpm)} BPM")
-            _process_one(notes, bpm, ts, f"{title} ({name})", stem_tuning, args, name, from_audio=True)
+            # Only tag the output with the stem's name when there's more than one to tell apart,
+            # so asking for a single part writes exactly the file you asked for.
+            label = name if len(found) > 1 else None
+            _process_one(notes, bpm, ts, f"{title} ({name})", stem_tuning, args, label, from_audio=True)
 
 
 def run(args: argparse.Namespace) -> int:

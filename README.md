@@ -110,7 +110,9 @@ tabify "https://example.com/my-riff.wav"          # direct file links work too
 tabify riff.wav --tuning auto
 
 # full-mix support - splits into stems first, then tabs guitar and bass separately
-tabify full_band_song.mp3 --separate -o song.txt   # writes song.guitar.txt, song.bass.txt
+tabify full_band_song.mp3 -o song.txt              # noticed as a mix: tabs the guitar
+tabify full_band_song.mp3 --stems bass             # or pick another part
+tabify full_band_song.mp3 --stems guitar,bass      # or several at once
 
 # hear it back with a real guitar tone (needs FluidSynth - see below)
 tabify riff.wav --audio-out riff_render.wav --instrument distortion
@@ -138,7 +140,8 @@ tabify song.mid --play                          # MIDI has no "original recordin
 | `--tuning auto` | Work the tuning out from the audio, and say how confident it is (see [detecting the tuning](#detecting-the-tuning)) |
 | `--midi-out FILE` | Save the transcribed notes as a MIDI file |
 | `--musicxml-out FILE` | Save as MusicXML (string/fret included), for Guitar Pro, TuxGuitar or MuseScore |
-| `--separate` | Split a full-band recording into instrument stems first, and tab each one (needs `[separate]`) |
+| `--separate` | Force separation even if the track doesn't look like a mix |
+| `--stems NAMES` | Which separated part to tab: `guitar` (default), `bass`, `other`, `piano`, `vocals`, a comma-separated list, or `all`. `other` is usually second guitars and keys |
 | `--bass-tuning` | Tuning used for the separated bass stem (default: `bass`) |
 | `--instrument NAME` | Tone for `--midi-out`/`--audio-out`: `nylon`, `steel`, `jazz`, `clean`, `muted`, `overdrive`, `distortion`, `harmonics`, or a bass patch |
 | `--audio-out FILE` | Render real audio of the transcription with `--instrument`'s tone (needs `[render]`) |
@@ -232,6 +235,15 @@ but a kick drum and bass guitar produce plenty of. Across real files, isolated t
 0.000-0.001 of their energy down there and mixes measure 0.11-0.29 - two orders of magnitude
 apart. It's judged against the instrument *you asked for*, so a bass stem reads as clean when
 you say `--tuning bass` and as "something else is in here" when you call it a guitar.
+
+You get the guitar by default, and tabify says what else is in there:
+
+```console
+Also in this track: bass, vocals - tab those with --stems bass,vocals
+```
+
+Drums aren't on the list - there's nothing to fret - and a stem the model found nothing for
+is reported as empty rather than tabbed into a page of silence.
 
 With `[separate]` installed, tabify splits the mix and tabs each instrument separately. Without
 it, you get told what to install. `--no-auto-separate` tabs the mix as one part anyway.
