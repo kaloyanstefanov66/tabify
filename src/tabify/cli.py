@@ -34,6 +34,10 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("-o", "--output", metavar="FILE", help="write the tab to FILE instead of the terminal")
     p.add_argument("--demo", action="store_true", help="render a built-in example, no input needed")
     p.add_argument("--version", action="version", version=f"tabify {__version__}")
+    p.add_argument(
+        "--doctor", action="store_true",
+        help="show which engine each stage of this install will actually use, and exit",
+    )
 
     g = p.add_argument_group("instrument")
     g.add_argument(
@@ -427,6 +431,12 @@ def _separate_and_process(path: Path, title: str, tuning, time_sig, args: argpar
 
 
 def run(args: argparse.Namespace) -> int:
+    if args.doctor:
+        from tabify.environment import report
+
+        print(report())
+        return 0
+
     if args.list_tunings:
         from tabify.tuning import ALIASES
 

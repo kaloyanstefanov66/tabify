@@ -34,40 +34,57 @@ tabify lists every way to finger each note and chord and gives each one a cost f
 
 ## Install
 
-Most people want one command:
+One command, and nothing is held back:
 
 ```bash
-pipx install "tabify-cli[audio,ml,separate]"
+pipx install --python 3.11 tabify-cli
 ```
 
 That gives you audio in, tabs out: chords, power chords, and full band mixes split into
-instruments first. No compiler, no separate installers.
+instruments first. No extras to pick, no compiler, no native installers. Separation used to
+mean installing PyTorch (~550 MB); it now runs on the same ONNX runtime the chord engine
+uses, which is why it's simply part of tabify rather than an afterthought - it's a tab
+transcriber, so hearing a band recording is the job.
 
-Separation used to mean installing PyTorch (~550 MB). It now runs on the same ONNX runtime
-the chord engine uses, so a mix gets split with no extra heavyweight dependency - which is
-why it belongs in the normal install rather than as an afterthought.
+Two optional extras remain, and only because each needs something pip can't install:
 
-| Install | Gives you | Extra setup |
+| Install | Adds | Extra setup |
 | --- | --- | --- |
-| `tabify-cli` | MIDI → tab, every tab feature | none |
-| `tabify-cli[audio]` | + transcribing **single-note** lines from audio | none |
-| `tabify-cli[ml]` | + **chords and power chords** (Spotify's [basic-pitch](https://github.com/spotify/basic-pitch)) | none on Python 3.10 |
-| `tabify-cli[youtube]` | + transcribe straight from a **link** | needs [ffmpeg](https://ffmpeg.org/download.html) |
-| `tabify-cli[render]` | + **render audio** of a transcription, and `--play` with a synth tone | needs [FluidSynth](https://github.com/FluidSynth/fluidsynth/releases) |
-| `tabify-cli[play]` | + **play along** with the original recording | none |
-| `tabify-cli[separate]` | + **full-mix** separation into stems | none on Python 3.11+ |
-| `tabify-cli[all]` | everything above | ffmpeg and FluidSynth if you want those parts |
+| `tabify-cli` | everything below the line: MIDI and audio in, chords, full-mix separation, `--play` | none |
+| `tabify-cli[render]` | **rendering audio** of a transcription, and `--play` with a synth tone | needs [FluidSynth](https://github.com/FluidSynth/fluidsynth/releases) |
+| `tabify-cli[youtube]` | transcribing straight from a **link** | needs [ffmpeg](https://ffmpeg.org/download.html) |
+| `tabify-cli[all]` | both | both |
 
-### Why Python 3.10 for chords
+`[audio]`, `[ml]`, `[separate]` and `[play]` still work as install names so older commands
+don't break, but they're empty now - you get all four either way.
 
-basic-pitch can run from a 0.2 MB ONNX model or from TensorFlow, and both give **identical
-predictions** (checked note for note). On Python 3.10 it installs the ONNX runtime and skips
-TensorFlow entirely; on 3.11 it insists on TensorFlow, which is a 1.2 GB download and about
-ten seconds of startup. tabify uses the ONNX model either way, so on 3.11 you pay for
-TensorFlow without using it.
+### Why `--python 3.11`
 
-`pipx` will fetch Python 3.10 for you if you don't have it. Chords still work on 3.11 - it
-just costs a gigabyte you didn't need.
+Two upstream packages disagree about Python, and 3.11 is the only version both accept:
+
+- **basic-pitch**, which hears chords, runs on 3.11 and older.
+- **demucs-onnx**, which splits a mix into instruments, runs on 3.11 and newer.
+
+tabify installs and runs on anything from 3.10 up, just without whichever piece its Python
+can't have. On 3.11, basic-pitch drags TensorFlow (1.2 GB) along as a hard dependency, but
+tabify never loads it: it runs the 0.2 MB ONNX copy of the same model, which gives
+**identical predictions** (checked note for note) and loads in a tenth of a second. You can
+uninstall TensorFlow afterwards and everything keeps working.
+
+### Check what your install can actually do
+
+```bash
+tabify --doctor
+```
+
+It reports which engine each stage will really use on **your** machine, because an
+environment installed earlier keeps whatever it was built with - changing a dependency list
+does nothing to an install that already exists. If something looks like it's taking the slow
+route, this is what says so, and pipx applies a changed dependency list only on reinstall:
+
+```bash
+pipx install --force --python 3.11 tabify-cli
+```
 
 ### What genuinely needs a separate install
 
@@ -245,8 +262,8 @@ Also in this track: bass, vocals - tab those with --stems bass,vocals
 Drums aren't on the list - there's nothing to fret - and a stem the model found nothing for
 is reported as empty rather than tabbed into a page of silence.
 
-With `[separate]` installed, tabify splits the mix and tabs each instrument separately. Without
-it, you get told what to install. `--no-auto-separate` tabs the mix as one part anyway.
+tabify splits the mix and tabs each instrument separately. `--no-auto-separate` tabs the mix
+as one part anyway. If separation isn't available on your Python, `tabify --doctor` says so.
 
 ### Full-mix support and its real limit
 
@@ -368,7 +385,7 @@ be one fixable bug.
 
 Automatic music transcription is still an open research problem, so here's what to expect:
 
-- **Works best on:** a clean recording of one guitar, such as a DI or close-mic recording, a riff, or a solo. With `--engine basic-pitch` (needs `[ml]`), chords, power chords and dyads (thirds, fourths, fifths, octaves) transcribe correctly - verified against a set of synthesized power chords and intervals, all detected with the right notes.
+- **Works best on:** a clean recording of one guitar, such as a DI or close-mic recording, a riff, or a solo. With `--engine basic-pitch` (the default when it's installed), chords, power chords and dyads (thirds, fourths, fifths, octaves) transcribe correctly - verified against a set of synthesized power chords and intervals, all detected with the right notes.
 - **Harder:** full band mixes, heavy distortion, and dense strumming. The notes will be rough.
 - **Palm mutes are inferred, not heard.** On distorted guitar, muted and let-ring strokes measured the same decay and brightness - the distortion compresses both - so tabify marks `PM` on fast (8th note or quicker) repeated hits on the two lowest strings, the way they're played in practice. Expect it to be right for chug riffs and wrong on anything unconventional; `--no-palm-mute` turns it off.
 - It doesn't detect bends, slides or hammer-ons yet.

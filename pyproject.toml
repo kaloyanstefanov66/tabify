@@ -19,33 +19,45 @@ classifiers = [
     "Programming Language :: Python :: 3",
     "Topic :: Multimedia :: Sound/Audio :: Analysis",
 ]
-dependencies = ["mido>=1.3"]
+# Everything tabify needs to transcribe a recording, including separating a full mix -
+# it's a tab transcriber, so hearing a band recording is the job, not an add-on. All of it
+# installs from wheels with no compiler and no native installers.
+#
+# Two version markers, because two upstream packages disagree about Python:
+#   basic-pitch (chords)      runs on 3.11 and older
+#   demucs-onnx (full mixes)  runs on 3.11 and newer
+# So 3.11 is the version that gets everything, and is what pipx should be pointed at.
+# Outside it tabify still installs and runs, just without whichever piece is unavailable;
+# `tabify --doctor` says which, on the machine it's actually installed on.
+dependencies = [
+    "mido>=1.3",
+    "numpy>=1.24",
+    "librosa>=0.10",
+    "soundfile>=0.12",
+    "sounddevice>=0.4",
+    # Runs basic-pitch's 0.2 MB ONNX model and demucs' - identical predictions to the
+    # 1.2 GB TensorFlow and 550 MB PyTorch builds, and a tenth of a second to load.
+    "onnxruntime>=1.17",
+    "basic-pitch>=0.4; python_version < '3.12'",
+    # basic-pitch's resampy dependency still imports pkg_resources, which setuptools
+    # removed in 81 - without this pin, loading the model dies on a fresh install.
+    "setuptools<81; python_version < '3.12'",
+    "demucs-onnx>=0.3; python_version >= '3.11'",
+]
 
 [project.optional-dependencies]
-# Monophonic (single-note) transcription + beat tracking.
-audio = ["librosa>=0.10"]
-# Polyphonic (chords) transcription with Spotify's basic-pitch. Needs Python <= 3.11.
-# setuptools<81 is pinned because basic-pitch's resampy dependency still imports pkg_resources,
-# which setuptools removed entirely starting with 81 - without this pin, model loading fails
-# with "ModuleNotFoundError: No module named 'pkg_resources'" on a fresh install.
-# onnxruntime lets basic-pitch run from its 0.2 MB ONNX model instead of TensorFlow
-# (identical predictions, a tenth of a second to load). On Python 3.10 that avoids
-# installing TensorFlow at all; on 3.11 basic-pitch still requires it, but tabify
-# won't load it.
-ml = ["basic-pitch>=0.4", "librosa>=0.10", "onnxruntime", "setuptools<81"]
-# Renders --audio-out with a real guitar tone. Also needs the native FluidSynth
-# library installed separately - see the "audio rendering" section of the README.
-render = ["pyfluidsynth>=1.3", "soundfile>=0.12", "numpy>=1.24"]
-# Full-mix support: separates a mix into instrument stems (guitar, bass, drums, vocals,
-# piano) before transcribing. The ONNX build of the same model needs only onnxruntime,
-# which the chord engine already pulls in - the PyTorch build is several hundred MB.
-separate = ["demucs-onnx>=0.3; python_version >= '3.11'", "onnxruntime"]
-# Interactive play-along mode (--play): live audio output, synced scrolling/highlighted tab.
-play = ["sounddevice>=0.4", "soundfile>=0.12", "numpy>=1.24"]
+# Renders --audio-out with a real guitar tone. Also needs the native FluidSynth library
+# installed separately - see the "audio rendering" section of the README.
+render = ["pyfluidsynth>=1.3"]
 # Transcribe straight from a YouTube (or other site) link. Also needs ffmpeg on PATH.
 youtube = ["yt-dlp>=2024.1"]
-# Everything except the pieces that need a separate native install (FluidSynth, ffmpeg).
-all = ["tabify-cli[audio,ml,play,separate,youtube]"]
+# The pieces that used to be opt-in and are now part of the base install. Kept so the
+# install commands people already have in their notes keep working.
+audio = []
+ml = []
+separate = []
+play = []
+all = ["tabify-cli[render,youtube]"]
 dev = ["pytest>=8"]
 
 [project.scripts]
