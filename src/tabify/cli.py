@@ -168,6 +168,28 @@ def _suffixed(path: str, label: str | None) -> str:
     return str(p.with_name(f"{p.stem}.{label}{p.suffix}"))
 
 
+def _warn_if_monophonic(args: argparse.Namespace) -> None:
+    """Say out loud when tabify is about to hear one note at a time.
+
+    pyin is the fallback engine and it is monophonic: every chord collapses to a single note,
+    most of a riff goes missing, and the tuning gets guessed from whatever survived. That used
+    to show up only as the word "pyin" in a status line, which reads like a detail rather than
+    the reason the tab is wrong.
+    """
+    from tabify.transcribe import resolve_engine
+
+    if args.engine != "auto" or resolve_engine("auto") != "pyin":
+        return
+    for line in (
+        "warning: chords are not available in this install, so tabify is listening for one",
+        "         note at a time (pyin). Power chords come out as single notes, much of a",
+        "         riff goes missing, and the tuning is guessed from whatever survived.",
+        "         Run 'tabify --doctor' to see what is wrong. Chord support needs",
+        "         basic-pitch, which installs on Python 3.11 and older.",
+    ):
+        _info(line)
+
+
 def _transcribe_path(path: Path, tuning, args: argparse.Namespace) -> tuple[list[Note], float, str]:
     """Run the configured engine over an audio file.
 
@@ -176,6 +198,7 @@ def _transcribe_path(path: Path, tuning, args: argparse.Namespace) -> tuple[list
     """
     from tabify.transcribe import transcribe_audio
 
+    _warn_if_monophonic(args)
     detect = tuning is None
     result = transcribe_audio(
         path,

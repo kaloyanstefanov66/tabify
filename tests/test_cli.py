@@ -93,3 +93,22 @@ def test_audio_detects_the_tuning_when_none_was_asked_for(tmp_path, monkeypatch)
     with pytest.raises(SystemExit):
         main([str(audio), "--no-color"])
     assert seen["tuning"] is None  # None means "work it out from the audio"
+
+
+def test_falling_back_to_one_note_at_a_time_is_said_out_loud(monkeypatch, capsys):
+    """A status line saying pyin is not enough - it is the reason the whole tab is wrong."""
+    from tabify import cli, transcribe
+
+    monkeypatch.setattr(transcribe, "_has", lambda name: name == "librosa")
+    parser = cli.build_parser()
+    cli._warn_if_monophonic(parser.parse_args(["x.wav"]))
+    err = capsys.readouterr().err
+    assert "chords are not available" in err and "--doctor" in err
+
+
+def test_no_such_warning_when_chords_are_available(monkeypatch, capsys):
+    from tabify import cli, transcribe
+
+    monkeypatch.setattr(transcribe, "_has", lambda name: True)
+    cli._warn_if_monophonic(cli.build_parser().parse_args(["x.wav"]))
+    assert capsys.readouterr().err == ""
