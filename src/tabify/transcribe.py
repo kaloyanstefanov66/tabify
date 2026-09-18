@@ -32,6 +32,8 @@ class AudioTranscription:
     bpm: float
     engine: str
     refine: RefineReport | None = None
+    tuning: object | None = None  # the Tuning picked when detection was asked for
+    tuning_ranking: list | None = None  # (score, Tuning) best first, when detection ran
 
 
 def _has(module: str) -> bool:
@@ -141,6 +143,7 @@ def transcribe_audio(
     onset_threshold: float = 0.5,
     min_note_ms: float = 80.0,
     refine: bool = True,
+    detect_tuning: bool = False,
 ) -> AudioTranscription:
     path = Path(path)
     engine = resolve_engine(engine)
@@ -152,10 +155,23 @@ def transcribe_audio(
     except Exception as exc:  # librosa raises a zoo of backend errors
         raise TabifyError(f"could not load audio {path}: {exc}") from exc
 
+    # Detecting the tuning means listening first and deciding after, so the pitch model gets
+    # the whole guitar range (C1 to E6) rather than one tuning's range.
+    if detect_tuning:
+        lowest, highest = 24, 88
+
     if engine == "basic-pitch":
         timed = _basic_pitch(path, lowest, highest, onset_threshold, min_note_ms)
     else:
         timed = _pyin(y, sr, lowest, highest, min_note_ms)
+
+    tuning = ranking = None
+    if detect_tuning:
+        from tabify.tuning import rank_tunings
+
+        ranking = rank_tunings([n.pitch for n in timed])
+        tuning = ranking[0][1]
+        lowest = tuning.strings[0]
 
     report = None
     if refine:
@@ -169,4 +185,4 @@ def transcribe_audio(
         start = to_beats(n.start)
         notes.append(Note(start, max(to_beats(n.end) - start, 0.0), n.pitch, n.velocity))
     notes.sort(key=lambda n: (n.start, n.pitch))
-    return AudioTranscription(notes, tempo, engine, report)
+    return AudioTranscription(notes, tempo, engine, report, tuning, ranking)

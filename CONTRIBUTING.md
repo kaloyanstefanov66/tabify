@@ -19,6 +19,8 @@ pytest
 | --- | --- |
 | `src/tabify/cli.py` | Argument parsing and the overall pipeline |
 | `src/tabify/transcribe.py` | Audio → notes (basic-pitch / pYIN) and beat tracking |
+| `src/tabify/fetch.py` | Downloading audio from a link (yt-dlp) or a direct file URL |
+| `src/tabify/evaluate.py` | Scoring a transcription against a known tab (see `benchmarks/`) |
 | `src/tabify/refine.py` | Cleanup of raw model notes against the audio: pick attacks, merged chugs, missing low roots |
 | `src/tabify/techniques.py` | Playing techniques inferred from the tab (palm mutes) |
 | `src/tabify/midi_io.py` | MIDI reading and writing |

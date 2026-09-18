@@ -105,3 +105,67 @@ def parse_tuning(spec: str) -> Tuning:
     if list(strings) != sorted(strings):
         raise TabifyError("tuning notes must be listed from the lowest string to the highest")
     return Tuning("custom", strings)
+
+
+def score_tuning(tuning: Tuning, pitches: list[int], *, max_fret: int = 22) -> float:
+    """How well a set of played pitches fits a tuning. Higher is better; 0 means unplayable.
+
+    Pitch content alone can't pin a tuning down - a lower tuning can reach every note a
+    higher one can, just at higher frets. What distinguishes them is how guitarists use
+    them: riffs lean on the open low string, and sit low on the neck. So this rewards
+    notes landing exactly on open strings, the lowest note being the lowest string, and
+    low fret positions, while anything unplayable is disqualifying.
+    """
+    if not pitches:
+        return 0.0
+    lowest, highest = tuning.strings[0], tuning.strings[-1] + max_fret
+    playable = [p for p in pitches if lowest <= p <= highest]
+    if not playable:
+        return 0.0
+    unplayable_share = 1 - len(playable) / len(pitches)
+    open_share = sum(p in tuning.strings for p in playable) / len(playable)
+    low_string_share = sum(p == lowest for p in playable) / len(playable)
+    starts_on_low_string = min(pitches) == lowest
+    # Lowest fret each note could be played at, as a fraction of the neck.
+    mean_fret = sum(min(p - s for s in tuning.strings if s <= p) for p in playable) / len(playable) / max_fret
+
+    # Weights picked by grid search over a small set of labelled riffs (12 of 12 correct);
+    # with that few cases they're a sensible starting point, not a tuned optimum.
+    return max(
+        0.0,
+        1.0
+        - 2.0 * unplayable_share
+        + 0.6 * open_share
+        + 0.8 * low_string_share  # leaning on the open low string is the signature of a drop tuning
+        + (0.8 if starts_on_low_string else 0.0)
+        - 0.5 * mean_fret,
+    )
+
+
+# Roughly how often each tuning turns up in real music, most common first. Used only to break
+# near-ties: a riff that never touches an open string fits many tunings equally well, and
+# standard is a far better guess than, say, dadgad when nothing else separates them.
+POPULARITY = (
+    "standard", "drop-d", "half-step-down", "d-standard", "drop-c", "drop-c#", "drop-b", "open-g",
+    "open-d", "dadgad", "7-string", "drop-a", "drop-a#", "c-standard", "open-e", "c#-standard",
+    "b-standard", "drop-g", "drop-g#", "open-c", "7-string-drop-a", "8-string", "a#-standard",
+    "a-standard", "drop-f#", "8-string-drop-e", "7-string-a#-standard", "bass", "bass-5", "bass-drop-d",
+)
+PRIOR_WEIGHT = 0.7
+
+
+def _prior(name: str) -> float:
+    if name not in POPULARITY:
+        return 0.0
+    return PRIOR_WEIGHT * (1 - POPULARITY.index(name) / len(POPULARITY))
+
+
+def rank_tunings(pitches: list[int], *, candidates=None, max_fret: int = 22) -> list[tuple[float, Tuning]]:
+    """Score every preset tuning against the pitches heard, best first."""
+    names = candidates if candidates is not None else list(TUNINGS)
+    scored = []
+    for name in names:
+        tuning = parse_tuning(name)
+        fit = score_tuning(tuning, pitches, max_fret=max_fret)
+        scored.append((fit + _prior(tuning.name) if fit else 0.0, tuning))
+    return sorted(scored, key=lambda s: (-s[0], s[1].strings[0]))

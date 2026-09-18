@@ -36,7 +36,10 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--version", action="version", version=f"tabify {__version__}")
 
     g = p.add_argument_group("instrument")
-    g.add_argument("-t", "--tuning", default="standard", help="preset name or notes low-to-high, e.g. 'D2 A2 D3 G3 B3 E4'")
+    g.add_argument(
+        "-t", "--tuning", default="standard",
+        help="preset name, notes low-to-high ('D2 A2 D3 G3 B3 E4'), or 'auto' to work it out from the audio",
+    )
     g.add_argument("--capo", type=int, default=0, help="capo fret (tab numbers are relative to the capo)")
     g.add_argument("--max-fret", type=int, default=22, help="highest fret on your guitar (default: 22)")
     g.add_argument("--max-span", type=int, default=4, help="max fret stretch within a chord (default: 4)")
@@ -135,19 +138,37 @@ def _suffixed(path: str, label: str | None) -> str:
 
 
 def _transcribe_path(path: Path, tuning, args: argparse.Namespace) -> tuple[list[Note], float, str]:
-    """Run the configured engine over an audio file and return (notes, bpm, engine used)."""
+    """Run the configured engine over an audio file.
+
+    `tuning` may be None, meaning "work it out from the audio". Returns
+    (notes, bpm, engine used, tuning).
+    """
     from tabify.transcribe import transcribe_audio
 
+    detect = tuning is None
     result = transcribe_audio(
         path,
-        lowest=tuning.strings[0] + args.capo,
-        highest=tuning.strings[-1] + args.max_fret,
+        lowest=(tuning.strings[0] + args.capo) if tuning else 0,
+        highest=(tuning.strings[-1] + args.max_fret) if tuning else 0,
         engine=args.engine,
         bpm=args.bpm,
         onset_threshold=args.onset_threshold,
         min_note_ms=args.min_note_ms,
         refine=not args.no_cleanup,
+        detect_tuning=detect,
     )
+    if detect:
+        tuning = result.tuning
+        ranking = result.tuning_ranking or []
+        best, runner_up = (ranking + [(0.0, None)] * 2)[:2]
+        others = ", ".join(f"{t.name} ({s:.2f})" for s, t in ranking[1:4] if t)
+        confident = best[0] - runner_up[0] > 0.15
+        _info(f"Tuning: {tuning.name} ({tuning.describe()}), fit {best[0]:.2f}; next best {others}")
+        if not confident:
+            _info(
+                "         that was a close call - this riff barely uses open strings, which is what "
+                "separates tunings. Pass --tuning if you know it."
+            )
     r = result.refine
     if r:
         roots = f", restored {r.roots_added} low root(s)" if r.roots_added else ""
@@ -156,7 +177,7 @@ def _transcribe_path(path: Path, tuning, args: argparse.Namespace) -> tuple[list
             f"{r.splits} merged re-strike(s) split{roots} (recording's low end stops near {round(r.low_end_hz)} Hz)"
         )
     # Beat tracking finds beats but not bar lines, so start bar 1 on the first played beat.
-    return start_on_first_beat(result.notes), result.bpm, result.engine
+    return start_on_first_beat(result.notes), result.bpm, result.engine, tuning
 
 
 def _quantize_and_fret(
@@ -280,7 +301,8 @@ def run(args: argparse.Namespace) -> int:
         print("\nAny other tuning: pass the open strings low to high, e.g. --tuning 'D2 A2 D3 G3 B3 E4'")
         return 0
 
-    tuning = parse_tuning(args.tuning)
+    # None means "work it out from the audio"; every path that can't (MIDI, --demo) checks below.
+    tuning = None if args.tuning.strip().lower() == "auto" else parse_tuning(args.tuning)
     if not 0 <= args.capo < args.max_fret:
         raise TabifyError(f"capo must be between 0 and {args.max_fret - 1}")
     if args.max_span < 1:
@@ -293,6 +315,7 @@ def run(args: argparse.Namespace) -> int:
         from tabify.demo import demo_notes
 
         time_sig = time_sig or TimeSignature()
+        tuning = tuning or parse_tuning("standard")  # nothing to listen to, so nothing to detect
         notes, bpm, title = demo_notes(), args.bpm or 90, title or "tabify demo"
         if args.play:
             _play_one(notes, bpm, time_sig, title, tuning, args, None)
@@ -302,9 +325,16 @@ def run(args: argparse.Namespace) -> int:
 
     if not args.input:
         raise TabifyError("no input file given (try: tabify --demo, or tabify --help)")
-    path = Path(args.input)
-    if not path.is_file():
-        raise TabifyError(f"file not found: {path}")
+
+    from tabify.fetch import fetch, is_url
+
+    if is_url(args.input):
+        path, fetched_title = fetch(args.input)
+        title = title or fetched_title
+    else:
+        path = Path(args.input)
+        if not path.is_file():
+            raise TabifyError(f"file not found: {path}")
     title = title or path.stem
 
     if args.separate:
@@ -325,7 +355,7 @@ def run(args: argparse.Namespace) -> int:
             for name in found:
                 stem_tuning = parse_tuning(args.bass_tuning) if name == "bass" else tuning
                 _info(f"Transcribing {name} stem ...")
-                notes, bpm, engine = _transcribe_path(stems[name], stem_tuning, args)
+                notes, bpm, engine, stem_tuning = _transcribe_path(stems[name], stem_tuning, args)
                 ts = time_sig or TimeSignature()
                 _info(f"  Engine: {engine}, {len(notes)} notes, ~{round(bpm)} BPM")
                 _process_one(notes, bpm, ts, f"{title} ({name})", stem_tuning, args, name, from_audio=True)
@@ -335,13 +365,15 @@ def run(args: argparse.Namespace) -> int:
     if is_midi:
         from tabify.midi_io import read_midi
 
+        if tuning is None:
+            raise TabifyError("--tuning auto needs audio to listen to; a MIDI file has no tone to judge from")
         content = read_midi(path, args.track)
         notes = content.notes
         bpm = args.bpm or content.bpm
         time_sig = time_sig or content.time_sig
     else:
         _info(f"Transcribing {path.name} ...")
-        notes, bpm, engine = _transcribe_path(path, tuning, args)
+        notes, bpm, engine, tuning = _transcribe_path(path, tuning, args)
         _info(f"Engine: {engine}, {len(notes)} notes, ~{round(bpm)} BPM")
 
     time_sig = time_sig or TimeSignature()

@@ -45,6 +45,7 @@ pipx install "tabify-cli[audio]"
 | `tabify-cli[ml]` | + **chords, power chords and other intervals** via Spotify's [basic-pitch](https://github.com/spotify/basic-pitch) | 3.10–3.11 |
 | `tabify-cli[separate]` | + **full-mix support**: split a band recording into stems (guitar/bass/drums/vocals/piano) before tabbing, via [Demucs](https://github.com/facebookresearch/demucs) | 3.10+ |
 | `tabify-cli[render]` | + **real audio rendering** of a transcription (acoustic/distorted guitar, bass, ...) via FluidSynth | 3.10+ |
+| `tabify-cli[youtube]` | + transcribe straight from a **YouTube (or other site) link**, via [yt-dlp](https://github.com/yt-dlp/yt-dlp) (needs ffmpeg) | 3.10+ |
 
 ```bash
 # chord/power-chord engine (basic-pitch currently needs Python 3.11 or older)
@@ -74,6 +75,13 @@ tabify solo.wav --musicxml-out solo.musicxml   # opens in Guitar Pro, TuxGuitar,
 tabify bassline.wav --tuning bass       # 4- and 5-string bass work too
 tabify --list-tunings
 
+# straight from a link - the audio is downloaded once and cached
+tabify "https://www.youtube.com/watch?v=..."
+tabify "https://example.com/my-riff.wav"          # direct file links work too
+
+# don't know the tuning? let tabify work it out from the audio
+tabify riff.wav --tuning auto
+
 # full-mix support - splits into stems first, then tabs guitar and bass separately
 tabify full_band_song.mp3 --separate -o song.txt   # writes song.guitar.txt, song.bass.txt
 
@@ -100,6 +108,7 @@ tabify song.mid --play                          # MIDI has no "original recordin
 | `--min-note-ms` | Ignore notes shorter than this, to filter out noise |
 | `--no-cleanup` | Skip snapping to pick attacks, splitting merged chugs and restoring missing low roots (see [the cleanup step](#the-cleanup-step)) |
 | `--no-palm-mute` | Don't mark palm mutes (they're inferred from rhythm and string, not heard) |
+| `--tuning auto` | Work the tuning out from the audio, and say how confident it is (see [detecting the tuning](#detecting-the-tuning)) |
 | `--midi-out FILE` | Save the transcribed notes as a MIDI file |
 | `--musicxml-out FILE` | Save as MusicXML (string/fret included), for Guitar Pro, TuxGuitar or MuseScore |
 | `--separate` | Split a full-band recording into instrument stems first, and tab each one (needs `[separate]`) |
@@ -113,6 +122,47 @@ tabify song.mid --play                          # MIDI has no "original recordin
 | `--source` | What `--play` plays: `original` (the recording) or `synth` (a rendered tone) - default: original if available |
 | `--seek-seconds N` | Seconds to jump with the arrow keys in `--play` (default: 5) |
 | `--width`, `--title`, `--no-color` | Display options |
+
+### Transcribing from a link
+
+```bash
+pip install "tabify-cli[youtube]"   # plus ffmpeg on PATH
+tabify "https://www.youtube.com/watch?v=..."
+```
+
+[yt-dlp](https://github.com/yt-dlp/yt-dlp) fetches the audio, tabify caches it (as FLAC,
+under your local app-data folder) so transcribing the same link twice only downloads once,
+and a direct file URL is downloaded without involving yt-dlp at all. Sites hand out the odd
+403 even for a link that worked a minute ago, so failed downloads are retried.
+
+Whether you may download a given video is between you and whoever holds the rights - your
+own uploads and openly licensed material are the safe cases. tabify won't scrape tab sites
+like Songsterr or Ultimate Guitar: those tabs are licensed content and their terms forbid it.
+
+### Detecting the tuning
+
+```bash
+tabify riff.wav --tuning auto
+```
+
+```console
+Tuning: drop-c (C2 G2 C3 F3 A3 D4), fit 2.67; next best open-c (2.31), c-standard (2.31)
+```
+
+Pitch alone can't pin a tuning down, because a lower tuning can reach every note a higher
+one can, just at higher frets. What separates them is how they're *used*: riffs lean on the
+open low string and sit low on the neck. So each preset is scored on notes landing on open
+strings, the lowest note being the lowest string, and fret economy, with anything unplayable
+disqualified and ties broken toward tunings people actually use.
+
+That works when a riff touches open strings. When it doesn't - a lick played entirely up the
+neck fits nearly every tuning equally - tabify says so instead of pretending:
+
+```console
+Tuning: drop-d (D2 A2 D3 G3 B3 E4), fit 1.55; next best half-step-down (1.51), standard (1.50)
+         that was a close call - this riff barely uses open strings, which is what separates
+         tunings. Pass --tuning if you know it.
+```
 
 ### Full-mix support and its real limit
 
