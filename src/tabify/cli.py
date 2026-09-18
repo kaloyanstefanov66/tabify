@@ -139,6 +139,10 @@ def build_parser() -> argparse.ArgumentParser:
         help="which track of a Guitar Pro score to compare against (default: the first guitar or bass)",
     )
     g.add_argument(
+        "--compare-from", type=int, metavar="BAR", default=1,
+        help="the first bar of the score the recording starts at (default: 1)",
+    )
+    g.add_argument(
         "--compare-bars", type=int, metavar="N",
         help="only compare the first N bars of the score - use it when the tab runs the whole "
         "song but the recording is just a section",
@@ -411,7 +415,9 @@ def _read_reference(args: argparse.Namespace):
     if path.suffix.lower() in GP_EXTENSIONS:
         from tabify.gpfile import read_gp
 
-        written = read_gp(path, track=args.compare_track, bars=args.compare_bars)
+        written = read_gp(
+            path, track=args.compare_track, bars=args.compare_bars, from_bar=args.compare_from
+        )
         _info(f"Comparing against the {written.metadata.get('track', 'first fretted')} track of {path.name}.")
         return written
 

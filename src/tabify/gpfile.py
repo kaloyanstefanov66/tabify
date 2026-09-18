@@ -95,11 +95,15 @@ def _score(path: str | Path) -> ET.Element:
     return ET.fromstring(raw)
 
 
-def read_gp(path: str | Path, *, track: str | None = None, bars: int | None = None) -> TabStrokes:
+def read_gp(
+    path: str | Path, *, track: str | None = None, bars: int | None = None, from_bar: int = 1
+) -> TabStrokes:
     """Read the ordered strokes of one track out of a Guitar Pro file.
 
-    `bars` reads only the first N bars, which is what you want when the score runs the whole
-    song but the recording is just the intro.
+    `from_bar` is the first bar to read, numbered the way the score displays them, and `bars`
+    is how many to take from there. Together they pick out the section that was actually
+    played, which matters because a score runs the whole song while a take is one riff from
+    the middle of it.
     """
     root = _score(path)
     tracks = _tracks(root)
@@ -114,8 +118,11 @@ def read_gp(path: str | Path, *, track: str | None = None, bars: int | None = No
 
     master_bars = root.find("MasterBars")
     strokes: list[list[tuple[int, int]]] = []
+    first = max(1, from_bar) - 1  # scores number bars from 1
     for bar_number, master in enumerate(master_bars if master_bars is not None else []):
-        if bars is not None and bar_number >= bars:
+        if bar_number < first:
+            continue
+        if bars is not None and bar_number >= first + bars:
             break
         ids = _ids(master.findtext("Bars"))
         if chosen >= len(ids):

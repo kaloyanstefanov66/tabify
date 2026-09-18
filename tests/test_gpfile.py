@@ -78,6 +78,18 @@ def test_bars_can_be_limited_to_what_was_actually_recorded(score):
     assert len(read_gp(score, bars=1).strokes) == 1
 
 
+def test_reading_from_a_bar_in_the_middle_of_the_score(score):
+    """A take is often one riff from deep inside a song, not the opening."""
+    assert len(read_gp(score).strokes) == 2
+    assert read_gp(score, from_bar=2).strokes == [[(0, 0)]]
+    assert read_gp(score, from_bar=2, bars=1).strokes == [[(0, 0)]]
+    assert read_gp(score, from_bar=1, bars=1).strokes == [[(0, 4), (1, 4), (2, 4)]]
+
+
+def test_a_bar_past_the_end_reads_nothing_rather_than_wrapping(score):
+    assert read_gp(score, from_bar=99).strokes == []
+
+
 def test_picking_a_track_by_name(score):
     assert read_gp(score, track="vocals").metadata["track"] == "Vocals"
     with pytest.raises(TabifyError, match="no track matching"):

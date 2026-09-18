@@ -381,9 +381,9 @@ Against my_riff.txt: 32 strokes written, 36 heard
 
 `--compare` reads **Guitar Pro files** (`.gp`) directly, so a tab you already own works as
 ground truth without retyping it: tabify picks the first guitar or bass track, or the one you
-name with `--compare-track`. Scores usually run the whole song while a recording is one
-section, so `--compare-bars N` limits the comparison to the first N bars. Hand-written ASCII
-tab works too.
+name with `--compare-track`. A take is usually one riff from the middle of a song rather than
+its opening, so `--compare-from BAR` says where the recording starts and `--compare-bars N`
+says how many bars it covers. Hand-written ASCII tab works too.
 
 The two are lined up the way two versions of a text are, so an extra chug or a missed note
 doesn't mark everything after it as wrong, and strokes are compared by the notes they sound
