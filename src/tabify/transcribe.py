@@ -34,6 +34,7 @@ class AudioTranscription:
     refine: RefineReport | None = None
     tuning: object | None = None  # the Tuning picked when detection was asked for
     tuning_ranking: list | None = None  # (score, Tuning) best first, when detection ran
+    beat_map: object | None = None  # the BeatMap used, for reporting how much the tempo moved
 
 
 def _has(module: str) -> bool:
@@ -107,30 +108,65 @@ def _pyin(y, sr: int, lo: int, hi: int, min_note_ms: float) -> list[_TimedNote]:
     return notes
 
 
-def _beat_mapper(y, sr: int, bpm: float | None):
-    """Return (seconds -> beats function, tempo)."""
+@dataclass
+class BeatMap:
+    """Maps recording time to musical time, following the tempo as it actually moves."""
+
+    to_beats: object  # callable: seconds -> beats
+    bpm: float  # the typical tempo, for display and for exports that want one number
+    bpm_low: float = 0.0
+    bpm_high: float = 0.0
+    beats: object = None  # detected beat times, if any
+
+    @property
+    def varies(self) -> bool:
+        """True when the tempo moves enough that a single BPM would misplace notes."""
+        return bool(self.bpm_high and self.bpm_high - self.bpm_low > 0.08 * self.bpm)
+
+
+def _beat_mapper(y, sr: int, bpm: float | None) -> BeatMap:
+    """Work out where the beats are, following a tempo that drifts rather than assuming one.
+
+    Nobody plays to a perfect grid, so the beat positions are kept and interpolated between:
+    a note lands where it falls *between the beats around it*, not where a fixed tempo says
+    it should be. The beats come from tabify's own attack detection, which finds far more of
+    a dense distorted riff than a general-purpose beat tracker does.
+    """
     import librosa
     import numpy as np
 
-    if bpm:
-        return (lambda t: t * bpm / 60.0), bpm
+    if bpm:  # the user told us the tempo, so take them at their word
+        return BeatMap(lambda t: t * bpm / 60.0, bpm)
 
-    tempo, beat_times = librosa.beat.beat_track(y=y, sr=sr, units="time")
+    from tabify.refine import onset_envelope
+
+    envelope = onset_envelope(y, sr)
+    tempo, beat_times = librosa.beat.beat_track(
+        onset_envelope=envelope, sr=sr, hop_length=HOP, units="time", trim=False
+    )
     tempo = float(np.atleast_1d(tempo)[0]) or 120.0
     if len(beat_times) < 2:
-        return (lambda t: t * tempo / 60.0), tempo
+        return BeatMap(lambda t: t * tempo / 60.0, tempo)
 
     beats = np.asarray(beat_times, dtype=float)
-    period = float(np.median(np.diff(beats)))
+    intervals = np.diff(beats)
+    period = float(np.median(intervals))
+    local_bpm = 60.0 / intervals[intervals > 0]
 
     def to_beats(t: float) -> float:
-        if t < beats[0]:
+        if t < beats[0]:  # before the first beat / after the last, carry the tempo on
             return (t - beats[0]) / period
         if t > beats[-1]:
             return len(beats) - 1 + (t - beats[-1]) / period
         return float(np.interp(t, beats, np.arange(len(beats))))
 
-    return to_beats, 60.0 / period
+    return BeatMap(
+        to_beats,
+        60.0 / period,
+        float(np.percentile(local_bpm, 10)),
+        float(np.percentile(local_bpm, 90)),
+        beats,
+    )
 
 
 def transcribe_audio(
@@ -179,10 +215,10 @@ def transcribe_audio(
 
         timed, report = refine_notes(timed, y, sr, lowest=lowest)
 
-    to_beats, tempo = _beat_mapper(y, sr, bpm)
+    beat_map = _beat_mapper(y, sr, bpm)
     notes = []
     for n in timed:
-        start = to_beats(n.start)
-        notes.append(Note(start, max(to_beats(n.end) - start, 0.0), n.pitch, n.velocity))
+        start = beat_map.to_beats(n.start)
+        notes.append(Note(start, max(beat_map.to_beats(n.end) - start, 0.0), n.pitch, n.velocity))
     notes.sort(key=lambda n: (n.start, n.pitch))
-    return AudioTranscription(notes, tempo, engine, report, tuning, ranking)
+    return AudioTranscription(notes, beat_map.bpm, engine, report, tuning, ranking, beat_map)

@@ -51,6 +51,9 @@ class Piece:
     noise_db: float = -60.0
     palm_muted: bool = False
     grid: int = 4
+    tempo_drift: float = 0.0  # speeds up and slows down by this fraction, like a human playing
+    tempo_ramp: float = 0.0  # steadily rushes (or drags) across the take, so error accumulates
+    timing_jitter_ms: float = 0.0  # each stroke lands slightly early or late
 
     def events(self) -> list[TabEvent]:
         out = []
@@ -111,13 +114,64 @@ def _single_note_line() -> Piece:
     return Piece("standard single-note line", "standard", 110, "clean", strokes)
 
 
-PIECES = [_chug_riff(), _missing_low_end(), _power_chord_moves(), _clean_arpeggio(), _single_note_line()]
+def _human_timing() -> Piece:
+    """The same riff played by a human: tempo drifting a few percent, strokes landing early or late.
+
+    The reference stays the tab as written - so this measures whether tabify follows a moving
+    tempo, or forces everything onto a grid that stopped matching after the first few bars.
+    """
+    piece = _chug_riff()
+    piece.name = "drop-C chug riff, human timing"
+    # Longer, so rushing has room to pull the performance away from where a fixed grid expects it.
+    pattern, bars = piece.strokes[: len(piece.strokes) // 4], 12
+    piece.strokes = [(bar * 4 + start, positions, duration) for bar in range(bars) for start, positions, duration in pattern]
+    piece.tempo_drift = 0.04
+    piece.tempo_ramp = 0.10  # rushes from about 83 to 101 BPM across the take
+    piece.timing_jitter_ms = 22.0
+    return piece
+
+
+PIECES = [
+    _chug_riff(),
+    _missing_low_end(),
+    _human_timing(),
+    _power_chord_moves(),
+    _clean_arpeggio(),
+    _single_note_line(),
+]
+
+
+def _played_beat(piece: Piece):
+    """Where each written beat actually lands when a human plays it: tempo drifting, strokes early or late.
+
+    Returns a function from written beat to the beat position to render at, so the audio wanders
+    while the reference tab stays what was written - which is exactly what has to be recovered.
+    """
+    if not (piece.tempo_drift or piece.tempo_ramp or piece.timing_jitter_ms):
+        return lambda beat, i: beat
+
+    total = max(start for start, _, _ in piece.strokes) or 1.0
+    grid = np.linspace(0, total, 2048)
+    fraction = grid / total
+    # Swells and sags (drift) plus steadily rushing (ramp). The ramp is the one that really
+    # breaks a fixed grid: its error accumulates bar after bar instead of cancelling out.
+    speed = (1 + piece.tempo_drift * np.sin(2 * np.pi * fraction)) * (1 + piece.tempo_ramp * (2 * fraction - 1))
+    elapsed = np.concatenate([[0], np.cumsum(np.diff(grid) / speed[:-1])])
+    rng = np.random.default_rng(7)
+    jitter = rng.normal(0, piece.timing_jitter_ms / 1000 * piece.bpm / 60, len(piece.strokes))
+
+    def played(beat: float, index: int) -> float:
+        return float(np.interp(beat, grid, elapsed) + jitter[index])
+
+    return played
 
 
 def render(piece: Piece, path: Path) -> None:
     tuning = parse_tuning(piece.tuning)
+    played = _played_beat(piece)
     events = []
-    for start, positions, duration in piece.strokes:
+    for i, (written, positions, duration) in enumerate(piece.strokes):
+        start = max(0.0, played(written, i))
         notes = [Note(start, duration, tuning.strings[s] + f) for s, f in positions]
         events.append(TabEvent(start, notes, [Position(s, f) for s, f in positions], palm_mute=piece.palm_muted))
     audio = synthesize(events, tuning, instrument=piece.instrument, bpm=piece.bpm, sample_rate=SAMPLE_RATE)
@@ -132,10 +186,13 @@ def render(piece: Piece, path: Path) -> None:
     sf.write(str(path), audio, SAMPLE_RATE)
 
 
-def transcribe(piece: Piece, path: Path, **kwargs) -> list[Stroke]:
+def transcribe(piece: Piece, path: Path, *, assume_fixed_tempo: bool = False, **kwargs) -> list[Stroke]:
     tuning = parse_tuning(piece.tuning)
+    # Pieces that drift are transcribed without being told the tempo, so the beat tracking has
+    # to find it; `assume_fixed_tempo` forces the old "one tempo for the whole take" behaviour.
+    told_tempo = piece.bpm if (assume_fixed_tempo or not piece.tempo_drift) else None
     result = transcribe_audio(
-        path, lowest=tuning.strings[0], highest=tuning.strings[-1] + 22, engine="basic-pitch", bpm=piece.bpm, **kwargs
+        path, lowest=tuning.strings[0], highest=tuning.strings[-1] + 22, engine="basic-pitch", bpm=told_tempo, **kwargs
     )
     notes = align_to_bars(quantize(result.notes, piece.grid), TimeSignature())
     return strokes_of(assign_frets(notes, tuning).events)
@@ -146,6 +203,10 @@ def main() -> int:
     parser.add_argument("--keep-audio", metavar="DIR", help="write the rendered audio here for listening")
     parser.add_argument("--no-cleanup", action="store_true", help="score the raw model output, without tabify's cleanup")
     parser.add_argument("--only", help="only run pieces whose name contains this")
+    parser.add_argument(
+        "--assume-fixed-tempo", action="store_true",
+        help="force one tempo for the whole take, instead of following it as it drifts",
+    )
     args = parser.parse_args()
 
     out_dir = Path(args.keep_audio) if args.keep_audio else None
@@ -160,7 +221,9 @@ def main() -> int:
         for piece in pieces:
             path = (out_dir or Path(tmp)) / (piece.name.replace(" ", "_").replace(",", "") + ".wav")
             render(piece, path)
-            predicted = transcribe(piece, path, refine=not args.no_cleanup)
+            predicted = transcribe(
+                piece, path, refine=not args.no_cleanup, assume_fixed_tempo=args.assume_fixed_tempo
+            )
             notes, tab = score(piece.reference(), predicted, parse_tuning(piece.tuning))
             note_f1s.append(notes.f1)
             tab_f1s.append(tab.f1)

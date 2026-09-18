@@ -54,8 +54,12 @@ def _hz(pitch: float) -> float:
 # --- attacks -----------------------------------------------------------------
 
 
-def detect_onsets(y: np.ndarray, sr: int, *, delta: float = 0.05, min_gap: float = 0.07, gate_db: float = -45.0):
-    """Pick attacks, tuned for dense distorted guitar. Returns onset times in seconds."""
+def onset_envelope(y: np.ndarray, sr: int) -> np.ndarray:
+    """How strongly the audio "attacks" at each frame, tuned for dense distorted guitar.
+
+    Also used for beat tracking: librosa's general-purpose envelope misses most chugs on
+    this material, and a beat grid is only as good as the attacks it's built from.
+    """
     import librosa
     from scipy.ndimage import maximum_filter1d
 
@@ -64,7 +68,14 @@ def detect_onsets(y: np.ndarray, sr: int, *, delta: float = 0.05, min_gap: float
     flux = np.maximum(0.0, np.diff(log_spec, axis=1, prepend=log_spec[:, :1])).sum(axis=0)
     # Normalize against the local maximum (1.5 s), not the whole track's: a handful of big
     # accents otherwise push every ordinary chug below the peak picker's threshold.
-    envelope = flux / (maximum_filter1d(flux, max(3, int(1.5 * sr / HOP))) + _EPS)
+    return flux / (maximum_filter1d(flux, max(3, int(1.5 * sr / HOP))) + _EPS)
+
+
+def detect_onsets(y: np.ndarray, sr: int, *, delta: float = 0.05, min_gap: float = 0.07, gate_db: float = -45.0):
+    """Pick attacks, tuned for dense distorted guitar. Returns onset times in seconds."""
+    import librosa
+
+    envelope = onset_envelope(y, sr)
     frames = librosa.onset.onset_detect(
         onset_envelope=envelope, sr=sr, hop_length=HOP, delta=delta, wait=max(1, int(min_gap * sr / HOP)),
         pre_max=3, post_max=3, pre_avg=10, post_avg=10, normalize=False,

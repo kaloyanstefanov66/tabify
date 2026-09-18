@@ -176,6 +176,12 @@ def _transcribe_path(path: Path, tuning, args: argparse.Namespace) -> tuple[list
             f"Cleanup: {r.onsets} pick attacks found, {r.snapped} note(s) snapped to them, "
             f"{r.splits} merged re-strike(s) split{roots} (recording's low end stops near {round(r.low_end_hz)} Hz)"
         )
+    beats = result.beat_map
+    if beats is not None and beats.varies:
+        _info(
+            f"Tempo moves between {round(beats.bpm_low)} and {round(beats.bpm_high)} BPM - notes are placed "
+            "against the beats as played, not a fixed grid. Pass --bpm to force a steady tempo instead."
+        )
     # Beat tracking finds beats but not bar lines, so start bar 1 on the first played beat.
     return start_on_first_beat(result.notes), result.bpm, result.engine, tuning
 

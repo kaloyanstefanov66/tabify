@@ -139,6 +139,30 @@ Whether you may download a given video is between you and whoever holds the righ
 own uploads and openly licensed material are the safe cases. tabify won't scrape tab sites
 like Songsterr or Ultimate Guitar: those tabs are licensed content and their terms forbid it.
 
+### Following the tempo
+
+Nobody plays to a perfect grid, and a tab built on a fixed tempo drifts further out of sync
+the longer someone rushes or drags. So tabify tracks where the beats actually fall and places
+notes *between the beats around them*, rather than against one tempo for the whole take. The
+beats come from tabify's own attack detection, which finds far more of a dense distorted riff
+than a general-purpose beat tracker does.
+
+On a benchmark take that rushes from roughly 83 to 101 BPM, the difference is stark:
+
+| | note F1 |
+| --- | --- |
+| following the tempo | **94%** |
+| assuming one fixed tempo | 60% |
+
+When the tempo moves, tabify says so:
+
+```console
+Tempo moves between 86 and 99 BPM - notes are placed against the beats as played, not a
+fixed grid. Pass --bpm to force a steady tempo instead.
+```
+
+Pass `--bpm` when you know the take is to a click and want a rigid grid.
+
 ### Detecting the tuning
 
 ```bash
@@ -244,10 +268,11 @@ search). Current mean across the benchmark, up from 65% / 46% before the cleanup
 | --- | --- | --- |
 | drop-C chug riff | 87% | 87% |
 | drop-C chug riff, low end cut | 86% | 86% |
+| drop-C chug riff, human timing | 94% | 94% |
 | drop-C power chords | 84% | 74% |
 | standard clean arpeggio | 70% | 45% |
 | standard single-note line | 73% | 18% |
-| **mean** | **80%** | **62%** |
+| **mean** | **82%** | **67%** |
 
 Read those as a way to compare changes, not as real-world accuracy: the audio is
 synthesized, so it's kinder than a real recording. For scale, [TART (2026)](https://arxiv.org/html/2609.11904),
