@@ -304,11 +304,10 @@ def _is_full_mix(path: Path, tuning, args: argparse.Namespace) -> bool:
     if args.separate or args.no_auto_separate or tuning is None:
         return False  # with --tuning auto there's no lowest string to measure against yet
 
-    import importlib.util
-
     import librosa
 
     from tabify.mixcheck import looks_like_full_mix
+    from tabify.separate import separation_available
 
     try:
         y, sr = librosa.load(str(path), sr=22050, mono=True, duration=40)
@@ -322,7 +321,7 @@ def _is_full_mix(path: Path, tuning, args: argparse.Namespace) -> bool:
         f"This sounds like a full band mix: {share:.0%} of its energy is below the lowest string of "
         f"{tuning.name}, which a guitar can't make - that's bass and kick drum."
     )
-    if importlib.util.find_spec("demucs") is not None:
+    if separation_available():
         _info("Splitting the instruments apart first, so they don't all land in one tab.")
         return True
     _info(

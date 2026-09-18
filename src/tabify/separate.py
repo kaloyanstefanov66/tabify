@@ -17,6 +17,8 @@ from __future__ import annotations
 import importlib.util
 from pathlib import Path
 
+import numpy as np
+
 from tabify import TabifyError
 
 MODEL = "htdemucs_6s"
@@ -24,20 +26,32 @@ MODEL = "htdemucs_6s"
 TRANSCRIBABLE = ("guitar", "bass")
 
 SEPARATE_HELP = (
-    "full-mix separation needs Demucs, which pulls in PyTorch (a few hundred MB):\n"
-    '  pip install "tabify-cli[separate]"\n'
-    f"The first run also downloads the {MODEL} model (roughly 100 MB) from Hugging Face."
+    'full-mix separation needs a separation model:\n  pip install "tabify-cli[separate]"\n'
+    f"The first run also downloads the {MODEL} model (roughly 100 MB)."
 )
 
 
-def separate_stems(path: str | Path, out_dir: str | Path) -> dict[str, Path]:
-    """Split `path` into instrument stems, written as wav files under `out_dir`."""
-    if importlib.util.find_spec("demucs") is None:
-        raise TabifyError(SEPARATE_HELP)
+def _separate_onnx(path: Path, out_dir: Path) -> dict[str, Path]:
+    """Separate with the ONNX build: same model, no PyTorch, and about as fast on CPU."""
+    import demucs_onnx
+    import soundfile as sf
+
+    try:
+        stems = demucs_onnx.separate(path, model=MODEL, progress=False)
+    except Exception as exc:  # model download and onnxruntime both have their own failure modes
+        raise TabifyError(f"stem separation failed: {exc}") from exc
+
+    paths = {}
+    for name, audio in stems.items():
+        out_path = out_dir / f"{name}.wav"
+        sf.write(str(out_path), np.asarray(audio, dtype=np.float32).T, 44100)
+        paths[name] = out_path
+    return paths
+
+
+def _separate_torch(path: Path, out_dir: Path) -> dict[str, Path]:
     from demucs.api import Separator, save_audio
 
-    out_dir = Path(out_dir)
-    out_dir.mkdir(parents=True, exist_ok=True)
     try:
         separator = Separator(model=MODEL)
         _, stems = separator.separate_audio_file(str(path))
@@ -50,3 +64,23 @@ def separate_stems(path: str | Path, out_dir: str | Path) -> dict[str, Path]:
         save_audio(tensor, str(out_path), samplerate=separator.samplerate)
         paths[name] = out_path
     return paths
+
+
+def separation_available() -> bool:
+    """Whether either separation backend is installed - ONNX preferred, PyTorch accepted."""
+    return any(importlib.util.find_spec(name) is not None for name in ("demucs_onnx", "demucs"))
+
+
+def separate_stems(path: str | Path, out_dir: str | Path) -> dict[str, Path]:
+    """Split `path` into instrument stems, written as wav files under `out_dir`.
+
+    Prefers the ONNX build of the same model, which needs only onnxruntime - tabify already
+    ships that for the chord engine - instead of PyTorch's several hundred megabytes.
+    """
+    out_dir = Path(out_dir)
+    out_dir.mkdir(parents=True, exist_ok=True)
+    if importlib.util.find_spec("demucs_onnx") is not None:
+        return _separate_onnx(Path(path), out_dir)
+    if importlib.util.find_spec("demucs") is not None:
+        return _separate_torch(Path(path), out_dir)
+    raise TabifyError(SEPARATE_HELP)

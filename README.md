@@ -37,11 +37,15 @@ tabify lists every way to finger each note and chord and gives each one a cost f
 Most people want one command:
 
 ```bash
-pipx install "tabify-cli[audio,ml]" --python 3.10
+pipx install "tabify-cli[audio,ml,separate]"
 ```
 
-That gives you audio in, tabs out, chords and all - and pulls **no native dependencies**:
-no compiler, no ffmpeg, no separate installers. Roughly 150 MB, most of it numpy and scipy.
+That gives you audio in, tabs out: chords, power chords, and full band mixes split into
+instruments first. No compiler, no separate installers.
+
+Separation used to mean installing PyTorch (~550 MB). It now runs on the same ONNX runtime
+the chord engine uses, so a mix gets split with no extra heavyweight dependency - which is
+why it belongs in the normal install rather than as an afterthought.
 
 | Install | Gives you | Extra setup |
 | --- | --- | --- |
@@ -51,8 +55,8 @@ no compiler, no ffmpeg, no separate installers. Roughly 150 MB, most of it numpy
 | `tabify-cli[youtube]` | + transcribe straight from a **link** | needs [ffmpeg](https://ffmpeg.org/download.html) |
 | `tabify-cli[render]` | + **render audio** of a transcription, and `--play` with a synth tone | needs [FluidSynth](https://github.com/FluidSynth/fluidsynth/releases) |
 | `tabify-cli[play]` | + **play along** with the original recording | none |
-| `tabify-cli[separate]` | + **full-mix** separation into stems | pulls PyTorch (~550 MB) |
-| `tabify-cli[all]` | everything above except `separate` | ffmpeg and FluidSynth if you want those parts |
+| `tabify-cli[separate]` | + **full-mix** separation into stems | none on Python 3.11+ |
+| `tabify-cli[all]` | everything above | ffmpeg and FluidSynth if you want those parts |
 
 ### Why Python 3.10 for chords
 

@@ -36,14 +36,16 @@ ml = ["basic-pitch>=0.4", "librosa>=0.10", "onnxruntime", "setuptools<81"]
 # Renders --audio-out with a real guitar tone. Also needs the native FluidSynth
 # library installed separately - see the "audio rendering" section of the README.
 render = ["pyfluidsynth>=1.3", "soundfile>=0.12", "numpy>=1.24"]
-# Full-mix support: separates a mix into instrument stems (guitar, bass, drums, vocals, piano) before transcribing.
-separate = ["demucs>=4.0"]
+# Full-mix support: separates a mix into instrument stems (guitar, bass, drums, vocals,
+# piano) before transcribing. The ONNX build of the same model needs only onnxruntime,
+# which the chord engine already pulls in - the PyTorch build is several hundred MB.
+separate = ["demucs-onnx>=0.3; python_version >= '3.11'", "onnxruntime"]
 # Interactive play-along mode (--play): live audio output, synced scrolling/highlighted tab.
 play = ["sounddevice>=0.4", "soundfile>=0.12", "numpy>=1.24"]
 # Transcribe straight from a YouTube (or other site) link. Also needs ffmpeg on PATH.
 youtube = ["yt-dlp>=2024.1"]
 # Everything except the pieces that need a separate native install (FluidSynth, ffmpeg).
-all = ["tabify-cli[audio,ml,play,youtube]"]
+all = ["tabify-cli[audio,ml,play,separate,youtube]"]
 dev = ["pytest>=8"]
 
 [project.scripts]
