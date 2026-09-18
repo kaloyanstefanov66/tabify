@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import importlib.util
 import shutil
+import sys
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -30,6 +31,17 @@ class Check:
     @property
     def mark(self) -> str:
         return "!" if self.warn else ("ok" if self.ok else "--")
+
+
+# basic-pitch, which hears chords, has no build for Python 3.12 or newer.
+BASIC_PITCH_MAX_PYTHON = (3, 12)
+# --force deliberately keeps the interpreter the venv already has, so it cannot fix a venv
+# built on the wrong Python. Removing it first is the only thing that does.
+REBUILD_ON_311 = chr(10).join((
+    "rebuild on Python 3.11, which is the only version that gets every feature:",
+    "    pipx uninstall tabify-cli",
+    '    pipx install --python 3.11 "tabify-cli[all]"',
+))
 
 
 def _have(module: str) -> bool:
@@ -51,12 +63,21 @@ def _bundled_onnx_model() -> Path | None:
 def _pitch_engine() -> Check:
     """basic-pitch runs from a 0.2 MB ONNX model or a 1.2 GB TensorFlow one - same predictions."""
     if not _have("basic_pitch"):
-        if _have("librosa"):
+        if not _have("librosa"):
+            return Check("chords", "no transcription engine at all", ok=False, fix="pip install tabify-cli")
+        if sys.version_info >= BASIC_PITCH_MAX_PYTHON:
+            # The usual cause, and it is silent: basic-pitch has no build for a Python this
+            # new, so installing simply leaves it out rather than failing. Telling someone to
+            # install it again cannot work - the interpreter is what has to change.
+            running = f"{sys.version_info[0]}.{sys.version_info[1]}"
             return Check(
-                "chords", "not installed - single notes only, via librosa pYIN", ok=False,
-                fix='pip install "tabify-cli[ml]"  (needs Python 3.11 or older)',
+                "chords", f"unavailable on Python {running} - single notes only, via librosa pYIN",
+                ok=False, fix=REBUILD_ON_311,
             )
-        return Check("chords", "no transcription engine at all", ok=False, fix="pip install tabify-cli")
+        return Check(
+            "chords", "not installed - single notes only, via librosa pYIN", ok=False,
+            fix="pip install basic-pitch",
+        )
     if not _have("onnxruntime"):
         return Check(
             "chords", "basic-pitch via TensorFlow (1.2 GB, ~10 s to load)", ok=True, warn=True,
@@ -140,8 +161,6 @@ def idle_heavyweights() -> list[str]:
 
 def report() -> str:
     """The doctor output: one line per capability, then only the fixes that apply."""
-    import sys
-
     found = checks()
     width = max(len(c.name) for c in found)
     lines = [f"tabify environment  (python {sys.version.split()[0]}, {sys.executable})", ""]
@@ -166,6 +185,7 @@ def report() -> str:
         lines += [
             "",
             "Installed with pipx? pipx applies a changed dependency list only on reinstall:",
-            "  pipx install --force \"tabify-cli[all]\"",
+            '  pipx install --force "tabify-cli[all]"',
+            "  (--force keeps the interpreter the venv already has - to change that, uninstall first)",
         ]
     return "\n".join(lines)

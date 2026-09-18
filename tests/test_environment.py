@@ -73,3 +73,22 @@ def test_report_is_quiet_when_everything_is_on_the_fast_path(installed, monkeypa
 def test_doctor_exits_zero_without_needing_an_input_file(capsys):
     assert run(build_parser().parse_args(["--doctor"])) == 0
     assert "tabify environment" in capsys.readouterr().out
+
+
+def test_a_too_new_python_is_named_as_the_reason_chords_are_missing(installed, monkeypatch):
+    """The usual cause, and a silent one: pip leaves basic-pitch out rather than failing."""
+    installed("librosa")
+    monkeypatch.setattr(environment.sys, "version_info", (3, 14, 2, "final", 0))
+    chords = named(environment.checks(), "chords")
+    assert not chords.ok
+    assert "Python 3.14" in chords.detail
+    # Reinstalling cannot help - --force keeps the interpreter, so the venv has to go first.
+    assert "pipx uninstall" in chords.fix and "--python 3.11" in chords.fix
+
+
+def test_on_a_supported_python_it_just_says_to_install_it(installed, monkeypatch):
+    installed("librosa")
+    monkeypatch.setattr(environment.sys, "version_info", (3, 11, 9, "final", 0))
+    chords = named(environment.checks(), "chords")
+    assert "pip install basic-pitch" in chords.fix
+    assert "uninstall" not in chords.fix
