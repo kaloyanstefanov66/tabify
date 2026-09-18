@@ -398,7 +398,17 @@ be one fixable bug.
 Automatic music transcription is still an open research problem, so here's what to expect:
 
 - **Works best on:** a clean recording of one guitar, such as a DI or close-mic recording, a riff, or a solo. With `--engine basic-pitch` (the default when it's installed), chords, power chords and dyads (thirds, fourths, fifths, octaves) transcribe correctly - verified against a set of synthesized power chords and intervals, all detected with the right notes.
-- **Harder:** full band mixes, heavy distortion, and dense strumming. The notes will be rough.
+- **Harder:** full band mixes, and chords of four or five ringing strings. Measured against two
+  real recordings with their own Guitar Pro tabs, power chords of two and three strings come
+  out reasonably, while four- and five-string voicings do not: on one riff, none of 111 such
+  strokes was transcribed exactly. The pitch model reports about one note per stroke on dense
+  distorted playing, and no amount of cleaning up afterwards can recover notes it never heard.
+- **How hard tabify listens depends on the tone.** A pitch model has one threshold for "is
+  this a note", and the right setting is not the same for distorted guitar as for a clean
+  arpeggio: what finds the notes in one invents them in the other. tabify measures how much
+  energy sits above 2 kHz and picks 0.3 for distorted tones, 0.5 for clean ones. On two real
+  riffs that roughly doubled the strokes transcribed exactly (23% to 54%, and 7% to 13%), at
+  the cost of more ghost notes. `--onset-threshold` overrides it.
 - **Palm mutes are not detected, and guessing them is off by default.** Muted and ringing strokes look the same to tabify: measured on a real riff against its tab, the sustain of muted and ringing strokes overlapped almost completely (medians 0.93 against 1.00, with the quartile ranges on top of each other), because distortion compresses the decay and the next stroke arrives before the last has died. The old guess - `PM` on fast repeated low-string hits - marked 76% of that riff as muted where the tab said 6%, a precision of 3%. Since a wrong `PM` changes how you would play the part, it now stays quiet rather than guess. `--palm-mute` turns the guess back on if your riff really is wall-to-wall chugging.
 - It doesn't detect bends, slides or hammer-ons yet.
 - Beat tracking finds the beats but can't be sure where bar 1 starts. Use `--bpm` if the tempo is off.

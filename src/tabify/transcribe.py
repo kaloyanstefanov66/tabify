@@ -62,6 +62,37 @@ def _midi_to_hz(pitch: float) -> float:
     return 440.0 * 2 ** ((pitch - 69) / 12)
 
 
+# How much of a recording's energy has to sit above BRIGHT_HZ before it counts as a
+# distorted or otherwise dense tone. Measured across real riffs and synthesized test pieces:
+# distorted guitar sat at 55%, synthesized chugs at 22%, a clean arpeggio at 16%.
+BRIGHT_SHARE = 0.20
+BRIGHT_HZ = 2000.0
+# basic-pitch's own default is 0.5, which is tuned for clean, sparse playing. On distorted
+# guitar it misses most of every chord - dropping it to 0.3 roughly doubled how many strokes
+# came out exactly right on two real recordings. On clean material the same change fills the
+# tab with ghost notes instead, so the tone decides.
+SENSITIVE, CAUTIOUS = 0.3, 0.5
+
+
+def sensitivity_for(y, sr: int) -> float:
+    """How hard to listen, judged from the tone of the recording.
+
+    A pitch model has one threshold for "is this a note", and the right setting is not the
+    same for a distorted wall of harmonics as for a clean arpeggio: what finds the notes in
+    one invents them in the other. Distortion shows up as energy high above the fundamentals,
+    which is measurable before the model runs.
+    """
+    import librosa
+    import numpy as np
+
+    spectrum = np.abs(librosa.stft(y, n_fft=4096, hop_length=2048))
+    freqs = librosa.fft_frequencies(sr=sr, n_fft=4096)
+    total = spectrum.sum()
+    if not total:
+        return CAUTIOUS
+    return SENSITIVE if spectrum[freqs > BRIGHT_HZ].sum() / total >= BRIGHT_SHARE else CAUTIOUS
+
+
 def _onnx_model_path():
     """The ONNX copy of basic-pitch's model, if it can be used.
 
@@ -193,7 +224,7 @@ def transcribe_audio(
     highest: int,
     engine: str = "auto",
     bpm: float | None = None,
-    onset_threshold: float = 0.5,
+    onset_threshold: float | None = None,
     min_note_ms: float = 80.0,
     refine: bool = True,
     detect_tuning: bool = False,
@@ -214,6 +245,8 @@ def transcribe_audio(
         lowest, highest = 24, 88
 
     if engine == "basic-pitch":
+        if onset_threshold is None:
+            onset_threshold = sensitivity_for(y, sr)
         timed = _basic_pitch(path, lowest, highest, onset_threshold, min_note_ms)
     else:
         timed = _pyin(y, sr, lowest, highest, min_note_ms)

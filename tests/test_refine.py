@@ -201,3 +201,25 @@ def test_a_lone_chug_is_judged_on_its_restored_root_not_its_harmonics():
     )
     assert added == 1 and dropped == 2
     assert sorted(n.pitch for n in notes) == [C2]
+
+
+# --- how hard to listen ---------------------------------------------------------------
+
+
+def test_a_distorted_tone_is_listened_to_harder_than_a_clean_one():
+    """One threshold does not fit both: what finds the notes in a wall of distortion
+    invents them in a clean arpeggio, so the tone picks the setting."""
+    from tabify.transcribe import CAUTIOUS, SENSITIVE, sensitivity_for
+
+    distorted = guitar([C2, G2, C3], seconds=2.0, drive=12.0)
+    assert sensitivity_for(distorted, SR) == SENSITIVE
+
+    t = np.arange(int(2.0 * SR)) / SR
+    clean = sum(np.sin(2 * np.pi * _hz(p) * t) for p in (52, 57, 62)).astype(np.float32)
+    assert sensitivity_for(clean / np.abs(clean).max(), SR) == CAUTIOUS
+
+
+def test_silence_does_not_divide_by_zero():
+    from tabify.transcribe import CAUTIOUS, sensitivity_for
+
+    assert sensitivity_for(np.zeros(SR, dtype=np.float32), SR) == CAUTIOUS
