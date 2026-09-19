@@ -417,6 +417,13 @@ Automatic music transcription is still an open research problem, so here's what 
   riffs that roughly doubled the strokes transcribed exactly (23% to 54%, and 7% to 13%), at
   the cost of more ghost notes. `--onset-threshold` overrides it.
 - **Palm mutes are not detected, and guessing them is off by default.** Muted and ringing strokes look the same to tabify: measured on a real riff against its tab, the sustain of muted and ringing strokes overlapped almost completely (medians 0.93 against 1.00, with the quartile ranges on top of each other), because distortion compresses the decay and the next stroke arrives before the last has died. The old guess - `PM` on fast repeated low-string hits - marked 76% of that riff as muted where the tab said 6%, a precision of 3%. Since a wrong `PM` changes how you would play the part, it now stays quiet rather than guess. `--palm-mute` turns the guess back on if your riff really is wall-to-wall chugging.
+- **A trained stroke model exists but isn't used.** `training/` holds a small model that reads
+  a struck chord off the pick attack. On synthesized holdout clips it gets the root right
+  96% of the time and the whole stroke 92%. On two real recordings it managed 6% and 17%,
+  against 53% and 13% for the ordinary pipeline - and its confidence carried no signal
+  there, scoring 4.5% on the strokes it was surest about. So it stays disconnected until it
+  has been fine-tuned on real audio. Synthesized training data is not enough on its own, and
+  that gap is the clearest measurement in this project.
 - It doesn't detect bends, slides or hammer-ons yet.
 - Beat tracking finds the beats but can't be sure where bar 1 starts. Use `--bpm` if the tempo is off.
 
