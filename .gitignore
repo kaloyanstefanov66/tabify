@@ -19,3 +19,6 @@ data/
 # Your own recordings - the README in there is tracked, the audio isn't.
 recordings/*
 !recordings/README.md
+
+# Training checkpoints: build artifacts. The exported .onnx is what ships.
+src/tabify/models/*.pt

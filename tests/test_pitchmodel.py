@@ -91,11 +91,18 @@ def test_matches_the_reference_implementation_note_for_note():
 
     Skipped when it isn't installed, which is the normal case now.
     """
-    basic_pitch = pytest.importorskip("basic_pitch", reason="reference implementation not installed")
     from pathlib import Path
 
     import soundfile as sf
-    from basic_pitch.inference import predict as reference
+
+    # Not importorskip: that only skips on ImportError, and this package fails with an
+    # AttributeError under NumPy 2 (it still calls np.complex_). Either way there is simply
+    # nothing to compare against on this machine, which is the normal case now.
+    try:
+        import basic_pitch
+        from basic_pitch.inference import predict as reference
+    except Exception as exc:
+        pytest.skip(f"reference implementation cannot run here: {type(exc).__name__}")
 
     chord = tone(40) + tone(47) + tone(52)
     # A held chord, then a lone re-struck root, so both the onset-driven and the leftover
@@ -111,7 +118,12 @@ def test_matches_the_reference_implementation_note_for_note():
         # of what this side is given, and the two legitimately disagree about quiet partials.
         sf.write(str(path), audio, SR, subtype="FLOAT")
         model = Path(basic_pitch.__file__).parent / "saved_models" / "icassp_2022" / "nmp.onnx"
-        _, _, theirs = reference(str(path), model_or_model_path=model, onset_threshold=0.5)
+        try:
+            _, _, theirs = reference(str(path), model_or_model_path=model, onset_threshold=0.5)
+        except Exception as exc:
+            # The reference drags TensorFlow in, which does not import under NumPy 2 - one of
+            # the reasons for no longer depending on it. Nothing to compare against here.
+            pytest.skip(f"reference implementation cannot run here: {type(exc).__name__}")
         out = P.predict(audio)
         mine = P.notes_from_output(
             out["note"], out["onset"], onset_threshold=0.5, frame_threshold=0.3,
