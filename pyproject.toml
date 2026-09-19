@@ -23,25 +23,22 @@ classifiers = [
 # it's a tab transcriber, so hearing a band recording is the job, not an add-on. All of it
 # installs from wheels with no compiler and no native installers.
 #
-# Two version markers, because two upstream packages disagree about Python:
-#   basic-pitch (chords)      runs on 3.11 and older
-#   demucs-onnx (full mixes)  runs on 3.11 and newer
-# So 3.11 is the version that gets everything, and is what pipx should be pointed at.
-# Outside it tabify still installs and runs, just without whichever piece is unavailable;
-# `tabify --doctor` says which, on the machine it's actually installed on.
+# Neither of the two models is a package dependency: both are ONNX files run through
+# onnxruntime. The chord model ships inside tabify (0.2 MB, in src/tabify/models); the
+# separation model downloads on first use. Depending on the basic-pitch package instead
+# used to drag TensorFlow in on Python 3.11 and newer - 1.3 GB that was downloaded and
+# never loaded, and which silently vanished along with chords on 3.12+, where it has no
+# build at all. `tabify --doctor` reports what the install can really do.
 dependencies = [
     "mido>=1.3",
     "numpy>=1.24",
+    "scipy>=1.10",
     "librosa>=0.10",
     "soundfile>=0.12",
     "sounddevice>=0.4",
-    # Runs basic-pitch's 0.2 MB ONNX model and demucs' - identical predictions to the
-    # 1.2 GB TensorFlow and 550 MB PyTorch builds, and a tenth of a second to load.
+    # Runs both ONNX models: identical predictions to the TensorFlow and PyTorch builds,
+    # and a tenth of a second to load instead of ten seconds.
     "onnxruntime>=1.17",
-    "basic-pitch>=0.4; python_version < '3.12'",
-    # basic-pitch's resampy dependency still imports pkg_resources, which setuptools
-    # removed in 81 - without this pin, loading the model dies on a fresh install.
-    "setuptools<81; python_version < '3.12'",
     "demucs-onnx>=0.3; python_version >= '3.11'",
 ]
 

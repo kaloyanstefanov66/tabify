@@ -33,17 +33,6 @@ class Check:
         return "!" if self.warn else ("ok" if self.ok else "--")
 
 
-# basic-pitch, which hears chords, has no build for Python 3.12 or newer.
-BASIC_PITCH_MAX_PYTHON = (3, 12)
-# --force deliberately keeps the interpreter the venv already has, so it cannot fix a venv
-# built on the wrong Python. Removing it first is the only thing that does.
-REBUILD_ON_311 = chr(10).join((
-    "rebuild on Python 3.11, which is the only version that gets every feature:",
-    "    pipx uninstall tabify-cli",
-    '    pipx install --python 3.11 "tabify-cli[all]"',
-))
-
-
 def _have(module: str) -> bool:
     try:
         return importlib.util.find_spec(module) is not None
@@ -51,46 +40,25 @@ def _have(module: str) -> bool:
         return False
 
 
-def _bundled_onnx_model() -> Path | None:
-    """basic-pitch's ONNX model file, found without importing the package."""
-    spec = importlib.util.find_spec("basic_pitch")
-    if spec is None or not spec.origin:
-        return None
-    model = Path(spec.origin).parent / "saved_models" / "icassp_2022" / "nmp.onnx"
-    return model if model.exists() else None
-
-
 def _pitch_engine() -> Check:
-    """basic-pitch runs from a 0.2 MB ONNX model or a 1.2 GB TensorFlow one - same predictions."""
-    if not _have("basic_pitch"):
-        if not _have("librosa"):
-            return Check("chords", "no transcription engine at all", ok=False, fix="pip install tabify-cli")
-        if sys.version_info >= BASIC_PITCH_MAX_PYTHON:
-            # The usual cause, and it is silent: basic-pitch has no build for a Python this
-            # new, so installing simply leaves it out rather than failing. Telling someone to
-            # install it again cannot work - the interpreter is what has to change.
-            running = f"{sys.version_info[0]}.{sys.version_info[1]}"
-            return Check(
-                "chords", f"unavailable on Python {running} - single notes only, via librosa pYIN",
-                ok=False, fix=REBUILD_ON_311,
-            )
+    """The polyphonic model is a 0.2 MB ONNX file shipped inside tabify.
+
+    There is no longer a Python version that can miss out on chords, and no TensorFlow to
+    install by accident: onnxruntime runs the model on every version tabify supports.
+    """
+    from tabify.pitchmodel import MODEL
+
+    if not MODEL.exists():
         return Check(
-            "chords", "not installed - single notes only, via librosa pYIN", ok=False,
-            fix="pip install basic-pitch",
+            "chords", "the model file is missing from this install", ok=False,
+            fix="pip install --force-reinstall tabify-cli",
         )
     if not _have("onnxruntime"):
-        return Check(
-            "chords", "basic-pitch via TensorFlow (1.2 GB, ~10 s to load)", ok=True, warn=True,
-            fix="pip install onnxruntime   # same model, 0.2 MB, loads instantly",
+        detail = "onnxruntime missing - single notes only, via librosa pYIN" if _have("librosa") else (
+            "no transcription engine at all"
         )
-    # Located from the spec rather than by importing basic_pitch, which drags TensorFlow in
-    # with it - a ten second wait to answer a question about a file on disk.
-    if not _bundled_onnx_model():
-        return Check(
-            "chords", "basic-pitch via TensorFlow (this build ships no ONNX model)", ok=True, warn=True,
-            fix='pip install --upgrade "basic-pitch>=0.4"',
-        )
-    return Check("chords", "basic-pitch via ONNX (0.2 MB model)", ok=True)
+        return Check("chords", detail, ok=False, fix="pip install onnxruntime")
+    return Check("chords", "basic-pitch via ONNX (0.2 MB, no TensorFlow)", ok=True)
 
 
 def _separation() -> Check:

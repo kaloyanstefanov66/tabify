@@ -34,17 +34,21 @@ tabify lists every way to finger each note and chord and gives each one a cost f
 
 ## Install
 
-One command, and nothing is held back:
+One command, any Python from 3.10 up:
 
 ```bash
-pipx install --python 3.11 tabify-cli
+pipx install tabify-cli
 ```
 
 That gives you audio in, tabs out: chords, power chords, and full band mixes split into
-instruments first. No extras to pick, no compiler, no native installers. Separation used to
-mean installing PyTorch (~550 MB); it now runs on the same ONNX runtime the chord engine
-uses, which is why it's simply part of tabify rather than an afterthought - it's a tab
-transcriber, so hearing a band recording is the job.
+instruments first. No extras to pick, no compiler, no native installers, and no model to
+download - the one that hears notes is a 0.2 MB file inside the wheel.
+
+Both models run on ONNX. Chords used to mean installing the basic-pitch package, which on
+Python 3.11 and newer requires TensorFlow: 1.3 GB that tabify downloaded and never loaded,
+since it ran the ONNX copy of the same model either way - and which on 3.12+ silently took
+chords with it, because it has no build there at all. Separation used to mean PyTorch
+(~550 MB). Neither is a dependency now, and the install went from roughly 1.9 GB to 580 MB.
 
 Two optional extras remain, and only because each needs something pip can't install:
 
@@ -58,18 +62,21 @@ Two optional extras remain, and only because each needs something pip can't inst
 `[audio]`, `[ml]`, `[separate]` and `[play]` still work as install names so older commands
 don't break, but they're empty now - you get all four either way.
 
-### Why `--python 3.11`
+### Which Python
 
-Two upstream packages disagree about Python, and 3.11 is the only version both accept:
+Any version from 3.10. Chords work everywhere, because the model is an ONNX file tabify
+ships and runs itself rather than a package with its own version limits. Full-mix
+separation needs 3.11 or newer, since demucs-onnx has no build below that; `tabify
+--doctor` says so on the machine it's installed on rather than going quiet.
 
-- **basic-pitch**, which hears chords, runs on 3.11 and older.
-- **demucs-onnx**, which splits a mix into instruments, runs on 3.11 and newer.
+The notes are unchanged by running the model directly - checked against the reference
+implementation and identical note for note, which a test keeps honest.
 
-tabify installs and runs on anything from 3.10 up, just without whichever piece its Python
-can't have. On 3.11, basic-pitch drags TensorFlow (1.2 GB) along as a hard dependency, but
-tabify never loads it: it runs the 0.2 MB ONNX copy of the same model, which gives
-**identical predictions** (checked note for note) and loads in a tenth of a second. You can
-uninstall TensorFlow afterwards and everything keeps working.
+### Credits
+
+The pitch model is [Basic Pitch](https://github.com/spotify/basic-pitch) by Spotify,
+Apache-2.0. Its licence and notice ship beside the model in `src/tabify/models/`.
+Separation uses [Demucs](https://github.com/facebookresearch/demucs).
 
 ### Check what your install can actually do
 

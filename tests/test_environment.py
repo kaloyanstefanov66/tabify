@@ -20,21 +20,19 @@ def named(checks, name):
     return next(c for c in checks if c.name == name)
 
 
-def test_tensorflow_only_is_a_warning_not_a_pass(installed):
-    # The exact shape of a stale install: basic-pitch works, but through the 1.2 GB
-    # backend, because a dependency list that now asks for onnxruntime was never applied.
-    installed("librosa", "basic_pitch")
-    chords = named(environment.checks(), "chords")
-    assert chords.ok and chords.warn
-    assert "TensorFlow" in chords.detail
-    assert "onnxruntime" in chords.fix
-
-
-def test_onnx_is_a_clean_pass(installed, monkeypatch, tmp_path):
-    installed("librosa", "basic_pitch", "onnxruntime")
-    monkeypatch.setattr(environment, "_bundled_onnx_model", lambda: tmp_path / "nmp.onnx")
+def test_onnxruntime_alone_is_enough_for_chords(installed):
+    """The model ships with tabify, so onnxruntime is the only thing that has to be there."""
+    installed("librosa", "onnxruntime")
     chords = named(environment.checks(), "chords")
     assert chords.ok and not chords.warn
+    assert "TensorFlow" in chords.detail  # named only to say it is not needed
+
+
+def test_without_onnxruntime_it_falls_back_and_says_so(installed):
+    installed("librosa")
+    chords = named(environment.checks(), "chords")
+    assert not chords.ok
+    assert "pYIN" in chords.detail and "onnxruntime" in chords.fix
 
 
 def test_the_doctor_does_not_import_tensorflow_to_answer(installed, monkeypatch):
@@ -75,20 +73,22 @@ def test_doctor_exits_zero_without_needing_an_input_file(capsys):
     assert "tabify environment" in capsys.readouterr().out
 
 
-def test_a_too_new_python_is_named_as_the_reason_chords_are_missing(installed, monkeypatch):
-    """The usual cause, and a silent one: pip leaves basic-pitch out rather than failing."""
-    installed("librosa")
-    monkeypatch.setattr(environment.sys, "version_info", (3, 14, 2, "final", 0))
-    chords = named(environment.checks(), "chords")
-    assert not chords.ok
-    assert "Python 3.14" in chords.detail
-    # Reinstalling cannot help - --force keeps the interpreter, so the venv has to go first.
-    assert "pipx uninstall" in chords.fix and "--python 3.11" in chords.fix
+@pytest.mark.parametrize("version", [(3, 10, 0), (3, 11, 9), (3, 12, 0), (3, 14, 2)])
+def test_no_python_version_loses_chords_any_more(installed, monkeypatch, version):
+    """Chords used to vanish silently on 3.12+, because basic-pitch had no build there.
+
+    Running the model straight from its own file removes that cliff entirely: the same
+    check passes on every version tabify supports.
+    """
+    installed("librosa", "onnxruntime")
+    monkeypatch.setattr(environment.sys, "version_info", (*version, "final", 0))
+    assert named(environment.checks(), "chords").ok
 
 
-def test_on_a_supported_python_it_just_says_to_install_it(installed, monkeypatch):
-    installed("librosa")
-    monkeypatch.setattr(environment.sys, "version_info", (3, 11, 9, "final", 0))
+def test_a_missing_model_file_is_reported_rather_than_falling_back_quietly(installed, monkeypatch, tmp_path):
+    installed("librosa", "onnxruntime")
+    from tabify import pitchmodel
+
+    monkeypatch.setattr(pitchmodel, "MODEL", tmp_path / "gone.onnx")
     chords = named(environment.checks(), "chords")
-    assert "pip install basic-pitch" in chords.fix
-    assert "uninstall" not in chords.fix
+    assert not chords.ok and "missing" in chords.detail

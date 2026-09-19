@@ -41,21 +41,30 @@ def _has(module: str) -> bool:
     return importlib.util.find_spec(module) is not None
 
 
+def chords_available() -> bool:
+    """Whether the polyphonic model can run: onnxruntime, and the model file beside it."""
+    from tabify.pitchmodel import MODEL
+
+    return _has("onnxruntime") and MODEL.exists()
+
+
 def resolve_engine(engine: str) -> str:
     if engine == "auto":
-        if _has("basic_pitch"):
+        if chords_available():
             return "basic-pitch"
         if _has("librosa"):
             return "pyin"
-        raise TabifyError(
-            "audio support is not installed. Install one of:\n"
-            "  pipx install 'tabify-cli[audio]'   # single-note lines, any Python\n"
-            "  pipx install 'tabify-cli[ml]' --python 3.11   # chords too (basic-pitch)"
-        )
-    needed = {"basic-pitch": ("basic_pitch", "ml"), "pyin": ("librosa", "audio")}[engine]
-    if not _has(needed[0]):
-        raise TabifyError(f"engine {engine!r} needs extra dependencies: pip install 'tabify-cli[{needed[1]}]'")
+        raise TabifyError("audio support is not installed: pip install tabify-cli")
+    if engine == "basic-pitch" and not chords_available():
+        raise TabifyError("the chord engine needs onnxruntime: pip install onnxruntime")
+    if engine == "pyin" and not _has("librosa"):
+        raise TabifyError("pyin needs librosa: pip install librosa")
     return engine
+
+
+# How loud a frame must stay for a note to count as still sounding. The pitch model's own
+# default, kept so predictions match what tabify produced before it ran the model directly.
+FRAME_THRESHOLD = 0.3
 
 
 def _midi_to_hz(pitch: float) -> float:
@@ -93,37 +102,37 @@ def sensitivity_for(y, sr: int) -> float:
     return SENSITIVE if spectrum[freqs > BRIGHT_HZ].sum() / total >= BRIGHT_SHARE else CAUTIOUS
 
 
-def _onnx_model_path():
-    """The ONNX copy of basic-pitch's model, if it can be used.
-
-    Same model, same predictions (checked note for note), but it loads in a tenth of a second
-    from a 0.2 MB file instead of pulling in TensorFlow - which is a 1.2 GB install and about
-    ten seconds of startup. Worth preferring whenever onnxruntime is around.
-    """
-    if importlib.util.find_spec("onnxruntime") is None:
-        return None
-    import basic_pitch
-
-    path = Path(basic_pitch.__file__).parent / "saved_models" / "icassp_2022" / "nmp.onnx"
-    return path if path.exists() else None
-
-
 def _basic_pitch(path: Path, lo: int, hi: int, onset_threshold: float, min_note_ms: float) -> list[_TimedNote]:
-    from basic_pitch.inference import predict
+    """Hear the notes, running the pitch model straight from its ONNX file.
 
-    model = _onnx_model_path()
-    _, _, events = predict(
-        str(path),
-        **({"model_or_model_path": model} if model else {}),
+    This used to go through the basic-pitch package, which on Python 3.11 and newer drags
+    TensorFlow along - 1.3 GB that was downloaded and never loaded, since the ONNX copy of
+    the same model was doing the work either way. `tabify.pitchmodel` does what the package
+    did for us, and a test checks the notes still come out identical.
+    """
+    import librosa
+
+    from tabify import pitchmodel
+
+    audio, _ = librosa.load(str(path), sr=pitchmodel.SAMPLE_RATE, mono=True)
+    output = pitchmodel.predict(audio)
+    n_frames = output["note"].shape[0]
+    events = pitchmodel.notes_from_output(
+        output["note"],
+        output["onset"],
         onset_threshold=onset_threshold,
-        minimum_note_length=min_note_ms,
-        minimum_frequency=_midi_to_hz(lo - 0.5),
-        maximum_frequency=_midi_to_hz(hi + 0.5),
+        frame_threshold=FRAME_THRESHOLD,
+        min_note_frames=int(round(min_note_ms / 1000 * pitchmodel.FRAMES_PER_SECOND)),
+        lowest_hz=_midi_to_hz(lo - 0.5),
+        highest_hz=_midi_to_hz(hi + 0.5),
     )
-    return [
-        _TimedNote(float(start), float(end), int(pitch), max(1, min(127, round(float(amp) * 127))))
-        for start, end, pitch, amp, *_ in events
-    ]
+    times = pitchmodel.frame_times(n_frames)
+    notes = []
+    for first, last, pitch, amplitude in events:
+        start = float(times[min(first, n_frames - 1)])
+        finish = float(times[min(last, n_frames - 1)])
+        notes.append(_TimedNote(start, finish, int(pitch), max(1, min(127, round(float(amplitude) * 127)))))
+    return notes
 
 
 def _pyin(y, sr: int, lo: int, hi: int, min_note_ms: float) -> list[_TimedNote]:
