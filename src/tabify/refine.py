@@ -45,6 +45,7 @@ class RefineReport:
     ghosts_dropped: int = 0
     roots_added: int = 0
     low_end_hz: float = 0.0
+    silent_dropped: int = 0  # notes reported where the recording carries no sound
 
 
 def _hz(pitch: float) -> float:
@@ -395,8 +396,38 @@ def collapse_to_roots(
 # --- all together ----------------------------------------------------------------------
 
 
+# How quiet a stretch has to be, against the recording as a whole, before notes reported
+# there are taken to be imagined rather than played. Measured on real takes: the silence
+# before the guitar came in sat at 0.01% and 0.7% of the track's overall level, while the
+# quietest real playing stayed far above that.
+SILENT_SHARE = 0.02
+
+
+def drop_notes_in_silence(notes: list[TimedNote], y: np.ndarray, sr: int, *, share: float = SILENT_SHARE):
+    """Remove notes the model reported where the recording is effectively silent.
+
+    Pitch models hallucinate in near-silence, and those notes do more damage than an ordinary
+    ghost: the first one decides where bar 1 of the tab begins, so two imagined notes in the
+    lead-in silence shift the whole tab against the audio.
+    """
+    if not len(y):
+        return notes, 0
+    floor = float(np.sqrt((y.astype(np.float64) ** 2).mean())) * share
+    kept = []
+    for n in notes:
+        lo, hi = int(max(n.start, 0.0) * sr), int(max(n.end, n.start + 0.02) * sr)
+        segment = y[lo:hi]
+        level = float(np.sqrt((segment.astype(np.float64) ** 2).mean())) if len(segment) else 0.0
+        if level >= floor:
+            kept.append(n)
+    return kept, len(notes) - len(kept)
+
+
 def refine(notes: list[TimedNote], y: np.ndarray, sr: int, *, lowest: int) -> tuple[list[TimedNote], RefineReport]:
     report = RefineReport()
+    if not notes:
+        return notes, report
+    notes, report.silent_dropped = drop_notes_in_silence(notes, y, sr)
     if not notes:
         return notes, report
     onsets = detect_onsets(y, sr)

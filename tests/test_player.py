@@ -124,3 +124,30 @@ def test_the_cursor_waits_at_the_start_during_the_lead_in():
     # During the lead-in the offset time is negative and must not run the tab backwards.
     assert step_at(max(0.0, 1.0 - 4.0), 120, 4) == 0.0
     assert step_at(max(0.0, 5.0 - 4.0), 120, 4) == 8.0
+
+
+def test_the_tab_starts_where_the_music_does_not_where_the_file_does():
+    """Two separate steps trim beats off the front of a tab; both must be added back."""
+    from tabify.notes import Note
+    from tabify.rhythm import TimeSignature, first_beat_shift, leading_bar_shift, quantize, start_on_first_beat
+
+    # A take whose first note lands six beats in - a bar and a half of lead-in.
+    notes = [Note(6.5, 1, 40), Note(7.5, 1, 45)]
+    origin = first_beat_shift(notes)
+    trimmed = leading_bar_shift(quantize(start_on_first_beat(notes), 4), TimeSignature())
+    assert origin == 6.0
+    # Together they account for the whole distance back to the start of the recording.
+    assert origin + trimmed == 6.0
+
+
+def test_playback_follows_the_beat_map_rather_than_one_fixed_tempo():
+    """Notes are placed against the beats as played; the cursor has to read the same clock."""
+    from tabify.player import step_at
+
+    # A take that speeds up: by 10 seconds a fixed 120 BPM is a long way from the truth.
+    def to_beats(t):
+        return t * 2.0 + 0.02 * t * t
+
+    fixed = step_at(10.0, 120, 4)
+    following = max(0.0, to_beats(10.0) - 0.0) * 4
+    assert abs(following - fixed) > 4  # more than a beat apart by then

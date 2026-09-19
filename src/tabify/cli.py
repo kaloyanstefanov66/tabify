@@ -13,7 +13,15 @@ from tabify.fretting import FretOptions, assign_frets
 from tabify.instruments import ALL_PROGRAMS, default_instrument
 from tabify.notes import Note
 from tabify.render import render_tab
-from tabify.rhythm import leading_bar_shift, TimeSignature, align_to_bars, parse_time_signature, quantize, start_on_first_beat
+from tabify.rhythm import (
+    TimeSignature,
+    align_to_bars,
+    first_beat_shift,
+    leading_bar_shift,
+    parse_time_signature,
+    quantize,
+    start_on_first_beat,
+)
 from tabify.tuning import TUNINGS, parse_tuning
 
 MIDI_EXTENSIONS = {".mid", ".midi"}
@@ -235,9 +243,10 @@ def _transcribe_path(path: Path, tuning, args: argparse.Namespace) -> tuple[list
     r = result.refine
     if r:
         roots = f", restored {r.roots_added} low root(s)" if r.roots_added else ""
+        silent = f", dropped {r.silent_dropped} note(s) reported in silence" if r.silent_dropped else ""
         _info(
             f"Cleanup: {r.onsets} pick attacks found, {r.snapped} note(s) snapped to them, "
-            f"{r.splits} merged re-strike(s) split{roots} (recording's low end stops near {round(r.low_end_hz)} Hz)"
+            f"{r.splits} merged re-strike(s) split{roots}{silent} (recording's low end stops near {round(r.low_end_hz)} Hz)"
         )
     beats = result.beat_map
     if beats is not None and beats.varies:
@@ -246,7 +255,10 @@ def _transcribe_path(path: Path, tuning, args: argparse.Namespace) -> tuple[list
             "against the beats as played, not a fixed grid. Pass --bpm to force a steady tempo instead."
         )
     # Beat tracking finds beats but not bar lines, so start bar 1 on the first played beat.
-    return start_on_first_beat(result.notes), result.bpm, result.engine, tuning
+    # How far that moved things is kept: playing along has to turn an audio position back
+    # into a place in the tab, and this is part of the distance between the two.
+    origin = first_beat_shift(result.notes)
+    return start_on_first_beat(result.notes), result.bpm, result.engine, tuning, beats, origin
 
 
 def _quantize_and_fret(
@@ -327,7 +339,7 @@ def _process_one(
 
 def _play_one(
     notes: list[Note], bpm: float, time_sig: TimeSignature, title: str, tuning,
-    args: argparse.Namespace, audio_path: Path | None,
+    args: argparse.Namespace, audio_path: Path | None, beats=None, origin: float = 0.0,
 ) -> None:
     from tabify.player import load_audio_file, play_along
 
@@ -352,20 +364,25 @@ def _play_one(
         )
         sample_rate = 44100
 
-    # Bar 1 of the tab is not second 0 of the recording: a take that opens with silence or a
-    # count-in has its empty bars trimmed off the tab, and playing the original back without
-    # putting that time back runs the tab ahead of the audio by exactly that much. Playing a
-    # synthesized version has no lead-in to restore, because it was rendered from the tab.
-    lead_in = trimmed_beats * 60.0 / bpm if source == "original" else 0.0
-    if lead_in:
-        _info(f"The tab starts {lead_in:.1f}s into the recording; playback follows the audio.")
+    # Bar 1 of the tab is not second 0 of the recording. Two separate steps moved it: beat 0
+    # was put on the first played beat, and then whole empty bars were trimmed off the front.
+    # Both are measured in beats, so they add up in beats - converting either one to seconds
+    # through a single tempo is what made this drift when the tempo moves.
+    tab_origin = (origin + trimmed_beats) if source == "original" else 0.0
+    # Playback also has to read the clock the way the transcription did. Notes were placed
+    # against the beats as played, so mapping seconds to a tab position with one fixed tempo
+    # walks away from them over the take; the beat map is the same one the notes came from.
+    to_beats = getattr(beats, "to_beats", None) if source == "original" else None
+    if tab_origin:
+        seconds = tab_origin * 60.0 / bpm
+        _info(f"The tab starts about {seconds:.1f}s into the recording; playback follows the audio.")
 
     width = args.width or shutil.get_terminal_size((100, 24)).columns
     play_along(
         fretted.events, tuning, audio, sample_rate,
         bpm=bpm, time_sig=time_sig, subdivision=args.grid, capo=args.capo,
         title=title, width=max(width, 20), color=_use_color(args), seek_seconds=args.seek_seconds,
-        lead_in=lead_in,
+        tab_origin=tab_origin, to_beats=to_beats,
     )
 
 
@@ -500,13 +517,13 @@ def _separate_and_process(path: Path, title: str, tuning, time_sig, args: argpar
         for name in found:
             stem_tuning = parse_tuning(args.bass_tuning) if name == "bass" else tuning
             _info(f"Transcribing {name} stem ...")
-            notes, bpm, engine, stem_tuning = _transcribe_path(stems[name], stem_tuning, args)
+            notes, bpm, engine, stem_tuning, beats, origin = _transcribe_path(stems[name], stem_tuning, args)
             ts = time_sig or TimeSignature()
             _info(f"  Engine: {engine}, {len(notes)} notes, ~{round(bpm)} BPM")
             if args.play:
                 # Play the separated stem, not the original mix: following a guitar tab is far
                 # easier against the guitar alone, which is the whole point of separating.
-                _play_one(notes, bpm, ts, f"{title} ({name})", stem_tuning, args, stems[name])
+                _play_one(notes, bpm, ts, f"{title} ({name})", stem_tuning, args, stems[name], beats, origin)
                 continue
             # Only tag the output with the stem's name when there's more than one to tell apart,
             # so asking for a single part writes exactly the file you asked for.
@@ -596,12 +613,15 @@ def run(args: argparse.Namespace) -> int:
         time_sig = time_sig or content.time_sig
     else:
         _info(f"Transcribing {path.name} ...")
-        notes, bpm, engine, tuning = _transcribe_path(path, tuning, args)
+        notes, bpm, engine, tuning, beats, origin = _transcribe_path(path, tuning, args)
         _info(f"Engine: {engine}, {len(notes)} notes, ~{round(bpm)} BPM")
 
     time_sig = time_sig or TimeSignature()
     if args.play:
-        _play_one(notes, bpm, time_sig, title, tuning, args, None if is_midi else path)
+        _play_one(
+            notes, bpm, time_sig, title, tuning, args, None if is_midi else path,
+            None if is_midi else beats, 0.0 if is_midi else origin,
+        )
     else:
         _process_one(notes, bpm, time_sig, title, tuning, args, None, from_audio=not is_midi)
     return 0

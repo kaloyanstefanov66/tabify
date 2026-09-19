@@ -124,7 +124,8 @@ def play_along(
     width: int = 80,
     color: bool = False,
     seek_seconds: float = 5.0,
-    lead_in: float = 0.0,
+    tab_origin: float = 0.0,
+    to_beats=None,
 ) -> None:
     if importlib.util.find_spec("sounddevice") is None:
         raise TabifyError(PLAY_HELP)
@@ -149,6 +150,19 @@ def play_along(
 
     def elapsed() -> float:
         return time.perf_counter() - started_at if playing else position
+
+    def tab_step(seconds: float) -> float:
+        """Where in the tab the recording has reached.
+
+        `to_beats` is the beat map the notes were placed against, so following it keeps the
+        cursor with them even where the tempo moves; without one (MIDI, or a synthesized
+        playback rendered from the tab itself) a fixed tempo is exactly right. `tab_origin`
+        is how many beats were trimmed off the front of the tab, which have to be added back
+        to turn an audio position into a place in it. Before bar 1 the cursor waits at the
+        start rather than running backwards off the tab.
+        """
+        beats = to_beats(seconds) if to_beats is not None else seconds * bpm / 60.0
+        return max(0.0, beats - tab_origin) * subdivision
 
     def start(from_seconds: float) -> None:
         nonlocal started_at, position, playing
@@ -184,9 +198,7 @@ def play_along(
                     f"[{'playing' if playing else 'paused '}] {mm:02d}:{ss:02d} / {tmm:02d}:{tss:02d}   "
                     f"space=pause/resume  <-/->=seek {seek_seconds:g}s  q=quit"
                 )
-                # Before the first bar the cursor waits at the start rather than running
-                # backwards off the tab.
-                _draw(layout, header, step_at(max(0.0, now - lead_in), bpm, subdivision), color, status)
+                _draw(layout, header, tab_step(now), color, status)
 
                 key = keys.read()
                 if key in ("q", "Q", "\x03", "ESC"):

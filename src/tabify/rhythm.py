@@ -44,11 +44,24 @@ def quantize(notes: list[Note], subdivision: int) -> list[Note]:
     return out
 
 
+def first_beat_shift(notes: list[Note]) -> float:
+    """How many beats sit before the beat that the first note falls on.
+
+    Like `leading_bar_shift`, this is a distance between the tab and the start of the
+    recording, and it has to be kept rather than discarded: playing along means turning an
+    audio position back into a place in the tab, and every beat trimmed off the front is a
+    beat that has to be added back to do that.
+    """
+    if not notes:
+        return 0.0
+    return float(math.floor(min(n.start for n in notes) + 0.25))  # tolerate notes played early
+
+
 def start_on_first_beat(notes: list[Note]) -> list[Note]:
     """Shift notes so the beat containing the first note becomes beat 0."""
     if not notes:
         return notes
-    shift = math.floor(min(n.start for n in notes) + 0.25)  # tolerate notes played slightly early
+    shift = first_beat_shift(notes)
     return [replace(n, start=n.start - shift) for n in notes]
 
 

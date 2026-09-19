@@ -4,7 +4,8 @@ import pytest
 pytest.importorskip("librosa")
 pytest.importorskip("scipy")
 
-from tabify.refine import (  # noqa: E402
+from tabify.refine import (
+    drop_notes_in_silence,  # noqa: E402
     TimedNote,
     _hz,
     _Spectra,
@@ -223,3 +224,31 @@ def test_silence_does_not_divide_by_zero():
     from tabify.transcribe import CAUTIOUS, sensitivity_for
 
     assert sensitivity_for(np.zeros(SR, dtype=np.float32), SR) == CAUTIOUS
+
+
+# --- notes imagined in silence ----------------------------------------------------------
+
+
+def test_notes_reported_in_silence_are_dropped():
+    """Pitch models hallucinate in near-silence, and the first note decides where bar 1 is."""
+    from tabify.refine import drop_notes_in_silence
+
+    quiet = np.zeros(int(1.0 * SR), dtype=np.float32)
+    played = guitar([C2, G2], seconds=1.0)
+    y = np.concatenate([quiet, played])
+    imagined = note(0.3, 0.6, C3)      # sits in the silence
+    real = note(1.2, 1.6, C2)          # sits in the playing
+    kept, dropped = drop_notes_in_silence([imagined, real], y, SR)
+    assert dropped == 1
+    assert [n.pitch for n in kept] == [C2]
+
+
+def test_quiet_playing_is_not_mistaken_for_silence():
+    y = guitar([C2, G2], seconds=1.0) * 0.05  # a soft take, but really played
+    kept, dropped = drop_notes_in_silence([note(0.1, 0.8, C2)], y, SR)
+    assert dropped == 0 and len(kept) == 1
+
+
+def test_an_empty_recording_drops_nothing_rather_than_dividing_by_zero():
+    kept, dropped = drop_notes_in_silence([note(0, 0.4, C2)], np.zeros(0, dtype=np.float32), SR)
+    assert dropped == 0 and len(kept) == 1
