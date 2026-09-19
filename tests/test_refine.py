@@ -280,3 +280,29 @@ def test_silence_gets_the_cautious_floor_rather_than_a_crash():
     from tabify.transcribe import FLOOR_MAX_MS, note_floor_ms
 
     assert note_floor_ms(np.zeros(SR, dtype=np.float32), SR) == FLOOR_MAX_MS
+
+
+def test_only_fast_playing_is_stretched_before_the_model_sees_it():
+    """Stretching buys frames per note, which slow playing does not need and pays for."""
+    from tabify.transcribe import STRETCH_WHEN_GAPS_BELOW_MS as LIMIT
+
+    # Real drop-tuned riffing measured at 81-104 ms between the quickest attacks; a moderate
+    # single-note line at 136 ms, and stretching that one made its tab worse.
+    assert 104 < LIMIT < 136
+
+
+def test_stretching_keeps_the_pitch_and_the_clock():
+    """A tape slowed down transposes; this must not, and the times must map back exactly."""
+    import librosa
+
+    from tabify.transcribe import STRETCH_FACTOR
+
+    y = guitar([C2], seconds=2.0)  # one note: with two, the loudest partial can legitimately swap
+    slowed = librosa.effects.time_stretch(y, rate=1.0 / STRETCH_FACTOR)
+    assert abs(len(slowed) / len(y) - STRETCH_FACTOR) < 0.01
+
+    def peak_hz(x):
+        spec = np.abs(np.fft.rfft(x * np.hanning(len(x))))
+        return float(np.fft.rfftfreq(len(x), 1 / SR)[spec.argmax()])
+
+    assert abs(peak_hz(slowed) - peak_hz(y)) < 3.0  # same pitch, not an octave down

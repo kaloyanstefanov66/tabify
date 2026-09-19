@@ -98,6 +98,37 @@ def note_floor_ms(y, sr: int) -> float:
     return float(np.clip(quickest * FLOOR_SHARE, FLOOR_MIN_MS, FLOOR_MAX_MS))
 
 
+# Fast playing is hard for a pitch model in two different ways, and only one of them is
+# physics. Identifying a low pitch needs several cycles of it, and a 65 Hz string gives a
+# cycle every 15 ms, so a 77 ms sixteenth barely contains enough waveform to measure - that
+# part cannot be argued with. But the model also runs at a fixed 86 frames a second, so that
+# same note is only six frames wide, and *that* is just arithmetic. Stretching time before
+# the model runs buys frames back: on two real recordings it took strokes transcribed exactly
+# from 60% to 66% and from 14% to 20%.
+#
+# It has to be a time stretch that keeps the pitch. Slowing the audio like a tape instead
+# drops every note out of the range the model handles best, and precision collapsed to 9%
+# when that was measured. Only the frames are worth buying, not the transposition.
+STRETCH_FACTOR = 2.0
+# Slower playing gains nothing from this and would pay for it in time, so it is only done
+# where the notes are short enough to be losing frames. Measured: real drop-tuned riffing
+# sits at 81-104 ms between the quickest attacks, while a moderate single-note line sits at
+# 136 ms and got worse when it was stretched. The line is drawn between them.
+STRETCH_WHEN_GAPS_BELOW_MS = 120.0
+
+
+def quickest_gap_ms(y, sr: int) -> float:
+    """How close together the quickest attacks are - how fast this is really being played."""
+    import numpy as np
+
+    from tabify.refine import detect_onsets
+
+    onsets = np.asarray(detect_onsets(y, sr))
+    if len(onsets) < 3:
+        return float("inf")
+    return float(np.percentile(np.diff(onsets), FLOOR_QUANTILE)) * 1000.0
+
+
 def _midi_to_hz(pitch: float) -> float:
     return 440.0 * 2 ** ((pitch - 69) / 12)
 
@@ -133,7 +164,9 @@ def sensitivity_for(y, sr: int) -> float:
     return SENSITIVE if spectrum[freqs > BRIGHT_HZ].sum() / total >= BRIGHT_SHARE else CAUTIOUS
 
 
-def _basic_pitch(path: Path, lo: int, hi: int, onset_threshold: float, min_note_ms: float) -> list[_TimedNote]:
+def _basic_pitch(
+    path: Path, lo: int, hi: int, onset_threshold: float, min_note_ms: float, audio=None
+) -> list[_TimedNote]:
     """Hear the notes, running the pitch model straight from its ONNX file.
 
     This used to go through the basic-pitch package, which on Python 3.11 and newer drags
@@ -145,7 +178,8 @@ def _basic_pitch(path: Path, lo: int, hi: int, onset_threshold: float, min_note_
 
     from tabify import pitchmodel
 
-    audio, _ = librosa.load(str(path), sr=pitchmodel.SAMPLE_RATE, mono=True)
+    if audio is None:
+        audio, _ = librosa.load(str(path), sr=pitchmodel.SAMPLE_RATE, mono=True)
     output = pitchmodel.predict(audio)
     n_frames = output["note"].shape[0]
     events = pitchmodel.notes_from_output(
@@ -266,6 +300,7 @@ def transcribe_audio(
     bpm: float | None = None,
     onset_threshold: float | None = None,
     min_note_ms: float | None = None,
+    stretch: float | None = None,
     refine: bool = True,
     detect_tuning: bool = False,
 ) -> AudioTranscription:
@@ -284,13 +319,24 @@ def transcribe_audio(
     if detect_tuning:
         lowest, highest = 24, 88
 
+    gap_ms = quickest_gap_ms(y, sr)
     if min_note_ms is None:
-        min_note_ms = note_floor_ms(y, sr)
+        min_note_ms = float(min(max(gap_ms * FLOOR_SHARE, FLOOR_MIN_MS), FLOOR_MAX_MS))
 
     if engine == "basic-pitch":
         if onset_threshold is None:
             onset_threshold = sensitivity_for(y, sr)
-        timed = _basic_pitch(path, lowest, highest, onset_threshold, min_note_ms)
+        if stretch is None:
+            stretch = STRETCH_FACTOR if gap_ms < STRETCH_WHEN_GAPS_BELOW_MS else 1.0
+        if stretch > 1.0:
+            slowed = librosa.effects.time_stretch(y, rate=1.0 / stretch)
+            timed = _basic_pitch(path, lowest, highest, onset_threshold, min_note_ms * stretch, audio=slowed)
+            # Back onto the recording's own clock, before anything else looks at the audio.
+            timed = [
+                _TimedNote(n.start / stretch, n.end / stretch, n.pitch, n.velocity) for n in timed
+            ]
+        else:
+            timed = _basic_pitch(path, lowest, highest, onset_threshold, min_note_ms)
     else:
         timed = _pyin(y, sr, lowest, highest, min_note_ms)
 
