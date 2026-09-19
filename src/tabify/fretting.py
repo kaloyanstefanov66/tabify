@@ -31,9 +31,19 @@ class FretOptions:
     # Cost weights
     shift_weight: float = 1.0  # per fret of hand movement between events
     big_shift_penalty: float = 2.0  # extra per fret beyond `max_span` in one move
-    span_weight: float = 0.5  # per fret of stretch inside a chord
+    span_weight: float = 0.25  # per fret of stretch inside a chord
     height_weight: float = 0.08  # prefer lower positions a little
     string_jump_weight: float = 0.15  # prefer staying on nearby strings
+    # Moving the hand at all is an event, separate from how far it moves. Without this, a
+    # fret of drift per stroke costs almost nothing and the fingering wanders up the neck a
+    # step at a time - which the measured tabs never do.
+    shift_cost: float = 0.0  # fitted to 0: it turned out not to help
+    # What an open string is worth. Fitted rather than assumed: players reach for them in
+    # some keys and avoid them in others, so the sign of this is a question for the data.
+    open_weight: float = 0.25
+    # Changing which strings are under the hand, beyond how far the hand moved. Guitarists
+    # keep a shape and move it; this is what tells that apart from re-fingering every chord.
+    string_set_weight: float = 0.1
 
 
 @dataclass
@@ -58,6 +68,7 @@ class _Candidate:
     cost: float
     hand: float | None  # centre of the fretted notes, None if all open strings
     mean_string: float
+    strings: frozenset[int] = frozenset()  # which strings this fingering uses
 
 
 def _options(pitch: int, tuning: Tuning, opts: FretOptions) -> list[Position]:
@@ -103,8 +114,11 @@ def _candidates(pitches: list[int], tuning: Tuning, opts: FretOptions) -> list[_
             cost = opts.span_weight * (hi - lo) + opts.height_weight * lo
         else:
             hand, cost = None, 0.0
+        cost += opts.open_weight * sum(1 for p in positions if p.fret == 0)
         mean_string = sum(p.string for p in positions) / len(positions)
-        cands.append(_Candidate(positions, cost, hand, mean_string))
+        cands.append(
+            _Candidate(positions, cost, hand, mean_string, frozenset(p.string for p in positions))
+        )
     cands.sort(key=lambda c: c.cost)
     return cands[:MAX_CANDIDATES]
 
@@ -131,10 +145,15 @@ def _playable(pitches: list[int], tuning: Tuning, opts: FretOptions) -> tuple[li
 
 def _transition(a: _Candidate, b: _Candidate, opts: FretOptions) -> float:
     cost = opts.string_jump_weight * abs(a.mean_string - b.mean_string)
+    # Keeping the same strings under the hand is keeping a shape; changing them is
+    # re-fingering, which is work even when the hand itself barely moves.
+    cost += opts.string_set_weight * len(a.strings ^ b.strings)
     if a.hand is None or b.hand is None:
         return cost
     d = abs(a.hand - b.hand)
     cost += opts.shift_weight * d
+    if d >= 0.5:  # anything less is the same position, just a different finger in it
+        cost += opts.shift_cost
     if d > opts.max_span:
         cost += opts.big_shift_penalty * (d - opts.max_span)
     return cost
