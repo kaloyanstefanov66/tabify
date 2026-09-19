@@ -67,6 +67,37 @@ def resolve_engine(engine: str) -> str:
 FRAME_THRESHOLD = 0.3
 
 
+# A note shorter than this is taken to be noise rather than something played. It cannot be a
+# fixed number of milliseconds: at 195 BPM a sixteenth note lasts 77 ms, so the 80 ms floor
+# tabify used to apply everywhere threw away every sixteenth in a fast riff before anything
+# else ran. It is derived from how fast the playing actually is, measured from the attacks
+# themselves, and bounded so neither a slow ballad nor a blast beat pushes it somewhere silly.
+FLOOR_SHARE = 0.5  # of the shortest gaps between attacks
+FLOOR_QUANTILE = 25  # not the median: see below
+FLOOR_MIN_MS, FLOOR_MAX_MS = 20.0, 80.0
+
+
+def note_floor_ms(y, sr: int) -> float:
+    """How short a note may be before it is not worth believing, judged from the playing.
+
+    Measured from the *shortest* gaps between attacks rather than the typical one, because
+    the detector misses fast notes too, and the notes it misses are exactly the ones this
+    floor decides the fate of. On a riff whose strokes were 77 ms apart it found two thirds
+    of them, which pushed the median gap to 151 ms and would have left the floor where it
+    started - discarding the fast notes for being fast. The gaps it did catch still show how
+    quick the playing is, so a low quantile survives the missed ones.
+    """
+    import numpy as np
+
+    from tabify.refine import detect_onsets
+
+    onsets = np.asarray(detect_onsets(y, sr))
+    if len(onsets) < 3:
+        return FLOOR_MAX_MS
+    quickest = float(np.percentile(np.diff(onsets), FLOOR_QUANTILE)) * 1000.0
+    return float(np.clip(quickest * FLOOR_SHARE, FLOOR_MIN_MS, FLOOR_MAX_MS))
+
+
 def _midi_to_hz(pitch: float) -> float:
     return 440.0 * 2 ** ((pitch - 69) / 12)
 
@@ -234,7 +265,7 @@ def transcribe_audio(
     engine: str = "auto",
     bpm: float | None = None,
     onset_threshold: float | None = None,
-    min_note_ms: float = 80.0,
+    min_note_ms: float | None = None,
     refine: bool = True,
     detect_tuning: bool = False,
 ) -> AudioTranscription:
@@ -252,6 +283,9 @@ def transcribe_audio(
     # the whole guitar range (C1 to E6) rather than one tuning's range.
     if detect_tuning:
         lowest, highest = 24, 88
+
+    if min_note_ms is None:
+        min_note_ms = note_floor_ms(y, sr)
 
     if engine == "basic-pitch":
         if onset_threshold is None:

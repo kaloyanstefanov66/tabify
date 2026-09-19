@@ -252,3 +252,31 @@ def test_quiet_playing_is_not_mistaken_for_silence():
 def test_an_empty_recording_drops_nothing_rather_than_dividing_by_zero():
     kept, dropped = drop_notes_in_silence([note(0, 0.4, C2)], np.zeros(0, dtype=np.float32), SR)
     assert dropped == 0 and len(kept) == 1
+
+
+# --- how short a note is allowed to be --------------------------------------------------
+
+
+def test_the_note_floor_follows_how_fast_the_playing_is():
+    """A fixed floor throws away fast notes for being fast: at 195 BPM a 16th is 77 ms."""
+    from tabify.transcribe import FLOOR_MAX_MS, note_floor_ms
+
+    def clicks(gap_s, count=40):
+        y = np.zeros(int(gap_s * count * SR) + SR, dtype=np.float32)
+        hit = guitar([C2, G2], seconds=min(gap_s, 0.2))
+        for i in range(count):
+            at = int(i * gap_s * SR)
+            y[at : at + len(hit)] += hit[: len(y) - at]
+        return y
+
+    fast = note_floor_ms(clicks(0.077), SR)   # sixteenths at 195 BPM
+    slow = note_floor_ms(clicks(0.5), SR)     # a much slower riff
+    assert fast < slow, "fast playing must get a lower floor than slow playing"
+    assert fast < 77.0, "the floor must not discard the very notes being played"
+    assert slow <= FLOOR_MAX_MS
+
+
+def test_silence_gets_the_cautious_floor_rather_than_a_crash():
+    from tabify.transcribe import FLOOR_MAX_MS, note_floor_ms
+
+    assert note_floor_ms(np.zeros(SR, dtype=np.float32), SR) == FLOOR_MAX_MS

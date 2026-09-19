@@ -88,7 +88,9 @@ def build_parser() -> argparse.ArgumentParser:
     g.add_argument("--onset-threshold", type=float, default=None,
                    help="basic-pitch note sensitivity, 0-1; lower hears more "
                         "(default: chosen from the tone - 0.3 for distorted, 0.5 for clean)")
-    g.add_argument("--min-note-ms", type=float, default=80.0, help="ignore notes shorter than this (default: 80)")
+    g.add_argument("--min-note-ms", type=float, default=None,
+                   help="ignore notes shorter than this in ms "
+                        "(default: from how fast the playing is - a 16th note at 195 BPM is only 77 ms)")
     g.add_argument(
         "--no-cleanup", action="store_true",
         help="skip snapping notes to pick attacks, splitting merged re-strikes and restoring missing low roots",
