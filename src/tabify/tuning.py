@@ -178,6 +178,17 @@ def _prior(name: str) -> float:
     return PRIOR_WEIGHT * (1 - POPULARITY.index(name) / len(POPULARITY))
 
 
+def lowest_possible_string(candidates=None) -> int:
+    """The lowest open string any tuning tabify knows about has.
+
+    Used before the tuning is known, to decide how far down a missing root may be looked
+    for. Judging that against one tuning's lowest string would beg the question the search
+    is about.
+    """
+    names = candidates if candidates is not None else list(TUNINGS)
+    return min(parse_tuning(name).strings[0] for name in names)
+
+
 def rank_tunings(pitches: list[int], *, candidates=None, max_fret: int = 22) -> list[tuple[float, Tuning]]:
     """Score every preset tuning against the pitches heard, best first."""
     names = candidates if candidates is not None else list(TUNINGS)

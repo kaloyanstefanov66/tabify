@@ -261,17 +261,30 @@ def transcribe_audio(
         timed = _pyin(y, sr, lowest, highest, min_note_ms)
 
     tuning = ranking = None
-    if detect_tuning:
-        from tabify.tuning import rank_tunings
-
-        ranking = rank_tunings([n.pitch for n in timed])
-        tuning = ranking[0][1]
-        lowest = tuning.strings[0]
-
     report = None
     if refine:
         from tabify.refine import refine as refine_notes
 
+    if detect_tuning:
+        from tabify.tuning import lowest_possible_string, rank_tunings
+
+        # What identifies a drop tuning is its low notes, and those are exactly the notes a
+        # pitch model misses: a distorted low chug reaches it as overtones with the
+        # fundamental gone. Asked about the raw output, detection sees a riff with no low
+        # end and answers "standard", which then makes the real notes unplayable.
+        #
+        # So the roots are restored first, with the floor set as low as any known tuning
+        # goes rather than one tuning's, and the tuning is judged on what was really played.
+        # The cleanup is then redone against the tuning that won, since it uses the lowest
+        # string to decide which roots are reachable at all.
+        judged = timed
+        if refine:
+            judged, _ = refine_notes(timed, y, sr, lowest=lowest_possible_string())
+        ranking = rank_tunings([n.pitch for n in judged])
+        tuning = ranking[0][1]
+        lowest = tuning.strings[0]
+
+    if refine:
         timed, report = refine_notes(timed, y, sr, lowest=lowest)
 
     beat_map = _beat_mapper(y, sr, bpm)

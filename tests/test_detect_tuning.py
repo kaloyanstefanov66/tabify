@@ -75,3 +75,32 @@ def test_a_recurring_low_note_does_rule_out_higher_tunings():
     # out every guitar tuning above it - forgiving it as noise made this a guitar.
     riff = played("bass", [(0, 0), (1, 0)] * 4 + [(0, 3), (1, 3)] * 3 + [(0, 5)] * 4)
     assert rank_tunings(riff)[0][1].name == "bass"
+
+
+# --- detection has to run on what was played, not on what the model first reported --------
+
+
+def test_overtones_alone_point_at_the_wrong_tuning():
+    """Why the pipeline's order matters, stated as a fact about the ranker.
+
+    A distorted low chug reaches a pitch model as its overtones with the fundamental gone.
+    Those overtones are all comfortably playable in standard tuning, so ranking them alone
+    answers "standard" - correctly, for the notes it was given, and uselessly.
+    """
+    root = parse_tuning("drop-c").strings[0]  # C2
+    overtones_only = [root + 19] * 16 + [root + 24] * 11 + [root + 5] * 3 + [root + 7] * 7
+    assert rank_tunings(overtones_only)[0][1].name == "standard"
+    assert rank_tunings(overtones_only)[0][1].strings[0] > root  # and so the riff won't fit
+    # With the roots put back, the answer reaches down to where the riff actually sits.
+    # Which C tuning it picks is a further question; that the low string is C2 is the one
+    # that decides whether the notes can be played at all.
+    assert rank_tunings(overtones_only + [root] * 16)[0][1].strings[0] == root
+
+
+def test_the_root_search_floor_is_lower_than_any_single_tuning():
+    """Looking for missing roots only as low as standard's low E would beg the question."""
+    from tabify.tuning import lowest_possible_string
+
+    floor = lowest_possible_string()
+    assert floor < parse_tuning("standard").strings[0]
+    assert floor <= min(parse_tuning(name).strings[0] for name in TUNINGS)
